@@ -1,0 +1,18 @@
+{
+  "_comment": "Not a real Schwung module -- chain_params lists the VST parameters of vfilter_vst.cpp so mpc-vst-plugins' tools/gen_vst.py can generate params.h + the skin. Keys must match vfilter_vst.cpp. Start values the plugin sets itself (start_values()). Only append, never reorder.",
+  "chain_params": [
+    { "key": "cutoff", "name": "Cutoff",     "min": 0, "max": 100 },
+    { "key": "reso",   "name": "Resonance",  "min": 0, "max": 100 },
+    { "key": "f2",     "name": "Filter 2",   "min": -24, "max": 24 },
+    { "key": "drive",  "name": "Drive",      "min": 0, "max": 30 },
+    { "key": "sat",    "name": "Saturation", "options": ["OFF", "SOFT", "HARD", "FOLD"] },
+    { "key": "emph",   "name": "Emphasis",   "min": 0, "max": 100 },
+    { "key": "envamt", "name": "Env Amount", "min": -48, "max": 48 },
+    { "key": "attack", "name": "Attack",     "min": 0, "max": 100 },
+    { "key": "decay",  "name": "Decay",      "min": 0, "max": 100 },
+    { "key": "thresh", "name": "Threshold",  "min": -60, "max": 0 },
+    { "key": "warmth", "name": "Warmth",     "min": 0, "max": 100 },
+    { "key": "width",  "name": "Width",      "min": 0, "max": 100 },
+    { "key": "output", "name": "Output",     "min": -24, "max": 12 }
+  ]
+}

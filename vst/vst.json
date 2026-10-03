@@ -1,0 +1,12 @@
+{
+  "name": "V-Filter",
+  "vendor": "lunarscraper",
+  "uid": "VFlt",
+  "version": 1000,
+  "so": "vfilter.so",
+  "module": "module.json",
+  "layout": "layout.conf",
+  "title_font": "fonts/TitilliumWeb-SemiBold.ttf",
+  "effect": true,
+  "_comment": "Insert effect: two serial low-pass filters with saturation in between (vfilter_core.h). \"effect\": true makes gen_vst.py list it as an insert effect (as in mpc-vst-rat). vst.json/module.json only feed mpc-vst-plugins' tools/gen_vst.py for params.h + the skin. The plugin is vfilter_vst.cpp, built by this port's own build.sh."
+}
