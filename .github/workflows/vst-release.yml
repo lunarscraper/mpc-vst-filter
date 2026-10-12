@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version, e.g. 0.1.0
+        description: Version, e.g. 0.2.0
         required: true
-        default: 0.1.0
+        default: 0.2.0
       dry_run:
         description: Build only (zip + skin previews as run artifacts), no draft release
         type: boolean
@@ -26,5 +26,5 @@ jobs:
       host_test: bash vst/test.sh
       plugin_id: vfilter
       license: MIT
-      about: V-Filter (insert effect) - two serial low-pass filters with saturation in between, audio-triggered filter envelope, output warmth and stereo chorus.
+      about: V-Filter (insert effect) - vowel/formant filter (A-E-I-O-U with envelope and LFO), two serial low-pass filters with saturation in between, audio-triggered filter envelope, output warmth and stereo chorus.
       dry_run: ${{ inputs.dry_run }}
