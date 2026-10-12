@@ -13,6 +13,14 @@
     { "key": "thresh", "name": "Threshold",  "min": -60, "max": 0 },
     { "key": "warmth", "name": "Warmth",     "min": 0, "max": 100 },
     { "key": "width",  "name": "Width",      "min": 0, "max": 100 },
-    { "key": "output", "name": "Output",     "min": -24, "max": 12 }
+    { "key": "output", "name": "Output",     "min": -24, "max": 12 },
+    { "key": "vowel",    "name": "Vowel",     "min": 0, "max": 100 },
+    { "key": "formant",  "name": "Formant",   "min": -12, "max": 12 },
+    { "key": "focus",    "name": "Focus",     "min": 0, "max": 100 },
+    { "key": "vmix",     "name": "Vowel Mix", "min": 0, "max": 100 },
+    { "key": "venv",     "name": "Vowel Env", "min": -100, "max": 100 },
+    { "key": "lforate",  "name": "LFO Rate",  "min": 0, "max": 100 },
+    { "key": "lfodepth", "name": "LFO Depth", "min": 0, "max": 100 },
+    { "key": "lfoshape", "name": "LFO Shape", "options": ["TRI", "RANDOM", "STEP"] }
   ]
 }

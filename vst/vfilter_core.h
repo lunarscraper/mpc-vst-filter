@@ -1,9 +1,14 @@
 // vfilter_core.h (DSP-Kern von V-Filter, MIT-Lizenz, siehe ../LICENSE)
-// DSP-Kern fuer ein Insert-Filter "Richtung Virus": 
-//   Pre-Emphasis -> Filter 1 -> Drive/Saettigung -> Filter 2 -> De-Emphasis
+// DSP-Kern fuer ein Insert-Filter "Richtung Virus":
+//   Vokal-/Formantfilter (abschaltbar) -> Pre-Emphasis -> Filter 1 -> Drive/Saettigung -> Filter 2 -> De-Emphasis
 //   -> Ausgangs-Saettigung -> Stereo-Chorus -> Output
 // Cutoff-Modulation: statisch/Automation (Variante 1) + audio-getriggerte
 // AD-Huellkurve per Envelope Follower (Variante 2, abschaltbar ueber envAmount = 0).
+//
+// Vokalfilter: drei parallele Bandpaesse auf den Formanten F1..F3 eines Vokals. VOWEL
+// blendet A-E-I-O-U ineinander, FORMANT schiebt alle drei gemeinsam (kleiner/groesserer
+// "Rachen"), bewegt von der Huellkurve und einem eigenen LFO. vowelMix = 0 schaltet die
+// Stufe ganz ab (der Rest rechnet dann wie vorher).
 //
 // Framework-neutral, keine Abhaengigkeiten ausser der Standardbibliothek.
 // Der nichtlineare Teil laeuft mit einfachem 2x-Oversampling.
@@ -18,6 +23,7 @@ class VirusStyleFilter
 {
 public:
     enum SatType { kSatOff = 0, kSatSoft, kSatHard, kSatFold };
+    enum LfoShape { kLfoTri = 0, kLfoRandom, kLfoStep };
 
     struct Params
     {
@@ -34,6 +40,15 @@ public:
         float warmth      = 0.2f;    // 0 .. 1  Ausgangs-Saettigung
         float width       = 0.3f;    // 0 .. 1  Stereo-Chorus-Anteil
         float outputDb    = 0.0f;    // -24 .. +12
+        // Vokal-/Formantfilter
+        float vowel       = 0.0f;    // 0 .. 1  Position A-E-I-O-U
+        float formantSemi = 0.0f;    // -12 .. +12 Halbtoene, alle Formanten gemeinsam
+        float focus       = 0.6f;    // 0 .. 1  Guete der Formanten (breit .. scharf)
+        float vowelMix    = 0.0f;    // 0 .. 1  (0 = Stufe aus)
+        float vowelEnv    = 0.0f;    // -1 .. +1 Huellkurve -> Vokalposition
+        float lfoRateHz   = 2.0f;    // 0.1 .. 20
+        float lfoDepth    = 0.0f;    // 0 .. 1  LFO -> Vokalposition
+        int   lfoShape    = kLfoTri;
     };
 
     void setSampleRate(float sampleRate)
@@ -58,6 +73,12 @@ public:
         gate = false;
         cutoffSm = 1000.0f;
         ctrlCounter = 0;
+        vLfoPhase = 0.0f;
+        vLfoFrom = vLfoTo = 0.0f;
+        vRng = 0x2545F491u;
+        vPosSm = -1.0f;
+        vOn = false;
+        for (int f = 0; f < kFormants; ++f) { fc_[f] = SvfCoefs(); fGain[f] = 0.0f; }
     }
 
     void process(const Params& p, const float* inL, const float* inR,
@@ -81,6 +102,15 @@ public:
         const float lfoInc  = 0.6f / fs;                 // Chorus-Rate 0.6 Hz
         const float baseDly = 0.012f * fs;               // 12 ms
         const float depth   = 0.003f * fs;               // +-3 ms
+        // Vokalfilter
+        const float vMix    = clamp(p.vowelMix, 0.0f, 1.0f);
+        const float focus   = clamp(p.focus, 0.0f, 1.0f);
+        const float vQ      = 3.0f * std::pow(8.0f, focus);            // Guete 3 .. 24
+        const float vK      = 1.0f / vQ;
+        const float vMakeup = 2.8f * std::pow(4.0f, focus);            // schmale Baender tragen weniger Pegel
+        const float vShift  = std::exp2(clamp(p.formantSemi, -12.0f, 12.0f) / 12.0f);
+        const float vLfoInc = 16.0f * clamp(p.lfoRateHz, 0.1f, 20.0f) / fs;   // pro Kontrollschritt
+        if (vMix <= 0.0005f && vOn) { for (int c = 0; c < 2; ++c) std::memset(ch[c].fm, 0, sizeof(ch[c].fm)); vOn = false; }
 
         for (uint32_t i = 0; i < frames; ++i)
         {
@@ -111,6 +141,42 @@ public:
                 const float fc2 = fc1 * std::exp2(p.filter2Semi / 12.0f);
                 setCoefs(c1, fc1, k);
                 setCoefs(c2, fc2, k);
+
+                if (vMix > 0.0005f)
+                {
+                    vOn = true;
+                    // LFO: Dreieck, weicher Zufall oder Zufallsstufen (ein neuer Wert pro Periode)
+                    vLfoPhase += vLfoInc;
+                    if (vLfoPhase >= 1.0f)
+                    {
+                        vLfoPhase -= 1.0f;
+                        vLfoFrom = vLfoTo;
+                        vRng = vRng * 1664525u + 1013904223u;
+                        vLfoTo = static_cast<float>(vRng >> 8) * (2.0f / 16777216.0f) - 1.0f;
+                    }
+                    float l;
+                    if (p.lfoShape == kLfoStep)        l = vLfoTo;
+                    else if (p.lfoShape == kLfoRandom) l = vLfoFrom + (vLfoTo - vLfoFrom) * vLfoPhase;
+                    else                               l = -tri(vLfoPhase);
+                    const float target = clamp(p.vowel + p.vowelEnv * env + 0.5f * clamp(p.lfoDepth, 0.0f, 1.0f) * l, 0.0f, 1.0f);
+                    if (vPosSm < 0.0f) vPosSm = target;
+                    vPosSm += 0.3f * (target - vPosSm);          // ~1 ms: Stufen ohne Knackser
+
+                    const float pos = vPosSm * (kVowels - 1);
+                    const int   i0  = std::min(kVowels - 2, static_cast<int>(pos));
+                    const float fr  = pos - static_cast<float>(i0);
+                    for (int f = 0; f < kFormants; ++f)
+                    {
+                        // Frequenz in Oktaven (logarithmisch), Pegel linear ueberblenden
+                        const float hz = kFormHz[i0][f] * std::pow(kFormHz[i0 + 1][f] / kFormHz[i0][f], fr) * vShift;
+                        const float g  = std::tan(kPi * clamp(hz, 60.0f, 0.45f * fs) / fs);
+                        fc_[f].a1 = 1.0f / (1.0f + g * (g + vK));
+                        fc_[f].a2 = g * fc_[f].a1;
+                        fc_[f].a3 = g * fc_[f].a2;
+                        fGain[f]  = (kFormGain[i0][f] + (kFormGain[i0 + 1][f] - kFormGain[i0][f]) * fr) * vK * vMakeup
+                                    * (f == 1 ? -1.0f : 1.0f);   // Nachbarn gegenphasig: keine Loecher zwischen den Formanten
+                    }
+                }
             }
             ctrlCounter = (ctrlCounter + 1) & 15;
 
@@ -124,6 +190,15 @@ public:
             for (int c = 0; c < 2; ++c)
             {
                 Channel& s = ch[c];
+
+                // Vokalfilter: drei parallele Bandpaesse, mit dem Original gemischt
+                if (vOn)
+                {
+                    float v = 0.0f;
+                    for (int f = 0; f < kFormants; ++f)
+                        v += fGain[f] * svfBp(s.fm[f], fc_[f], x[c] + kDenorm);
+                    x[c] += vMix * (softSat(v) - x[c]);
+                }
 
                 // Pre-Emphasis: Hoehen anheben, damit die Saettigung oben mehr greift
                 s.preLp += emphCoef * (x[c] - s.preLp);
@@ -182,7 +257,26 @@ private:
 
     struct SvfState { float ic1, ic2; };
     struct SvfCoefs { float a1 = 0, a2 = 0, a3 = 0; };
-    struct Channel  { SvfState f1, f2; float preLp, deLp, prevIn; };
+    struct Channel  { SvfState f1, f2; float preLp, deLp, prevIn; SvfState fm[3]; };
+
+    // Formanten F1..F3 (Hz) und ihre Pegel fuer A, E, I, O, U (Maennerstimme, gerundet;
+    // die Pegel der oberen Formanten sind angehoben, damit der Vokal auch mit einem
+    // Saegezahn deutlich bleibt)
+    static constexpr int kVowels = 5, kFormants = 3;
+    static constexpr float kFormHz[kVowels][kFormants] = {
+        { 700.0f, 1150.0f, 2600.0f },   // A
+        { 450.0f, 1750.0f, 2600.0f },   // E
+        { 290.0f, 2100.0f, 2900.0f },   // I
+        { 420.0f,  800.0f, 2500.0f },   // O
+        { 330.0f,  650.0f, 2400.0f },   // U
+    };
+    static constexpr float kFormGain[kVowels][kFormants] = {
+        { 1.00f, 0.70f, 0.45f },
+        { 1.00f, 0.55f, 0.45f },
+        { 1.00f, 0.50f, 0.40f },
+        { 1.00f, 0.60f, 0.30f },
+        { 1.00f, 0.45f, 0.25f },
+    };
 
     // TPT-State-Variable-Filter (2-Pol), bleibt auch bei schneller Modulation stabil
     void setCoefs(SvfCoefs& c, float fc, float k) const
@@ -202,6 +296,17 @@ private:
         s.ic1 = 2.0f * v1 - s.ic1;
         s.ic2 = 2.0f * v2 - s.ic2;
         return v2;
+    }
+
+    // Bandpass-Ausgang desselben Filters (der Aufrufer normiert mit k auf Spitzenpegel 1)
+    static inline float svfBp(SvfState& s, const SvfCoefs& c, float x)
+    {
+        const float v3 = x - s.ic2;
+        const float v1 = c.a1 * s.ic1 + c.a2 * v3;
+        const float v2 = s.ic2 + c.a2 * s.ic1 + c.a3 * v3;
+        s.ic1 = 2.0f * v1 - s.ic1;
+        s.ic2 = 2.0f * v2 - s.ic2;
+        return v1;
     }
 
     static inline float softSat(float x)          // schnelle tanh-Naeherung
@@ -245,4 +350,11 @@ private:
 
     float cutoffSm = 1000.0f;
     int   ctrlCounter = 0;
+
+    // Vokalfilter
+    SvfCoefs fc_[3];
+    float    fGain[3] = { 0, 0, 0 };
+    float    vLfoPhase = 0.0f, vLfoFrom = 0.0f, vLfoTo = 0.0f, vPosSm = -1.0f;
+    uint32_t vRng = 0x2545F491u;
+    bool     vOn = false;
 };

@@ -1,7 +1,8 @@
 /* Offline x86 test of vfilter_vst.cpp (test.sh builds it with ASan/UBSan): clean when everything
  * is off, CUTOFF and FILTER 2 darkening, RESONANCE peaking, DRIVE adding harmonics for each
  * saturation type, the audio-triggered envelope opening the filter, WIDTH (0 = both channels
- * equal), channel independence, loud input below 0 dBFS, chunk restore, NaN/denormal-free output.
+ * equal), channel independence, loud input below 0 dBFS, the vowel filter (formant peaks per vowel,
+ * FORMANT shift, VOWEL ENV, LFO), chunk restore, NaN/denormal-free output.
  * With "bench" as the second argument it only measures CPU load. Prints PASSED/FAILED. */
 #include <chrono>
 #include <cmath>
@@ -48,7 +49,9 @@ static void set(AEffect *e, const char *name, int v) {
     struct R { const char *n; int lo, hi; };
     static const R r[] = {{"Cutoff", 0, 100}, {"Resonance", 0, 100}, {"Filter 2", -24, 24}, {"Drive", 0, 30},
                           {"Saturation", 0, 3}, {"Emphasis", 0, 100}, {"Env Amount", -48, 48}, {"Attack", 0, 100},
-                          {"Decay", 0, 100}, {"Threshold", -60, 0}, {"Warmth", 0, 100}, {"Width", 0, 100}, {"Output", -24, 12}};
+                          {"Decay", 0, 100}, {"Threshold", -60, 0}, {"Warmth", 0, 100}, {"Width", 0, 100}, {"Output", -24, 12},
+                          {"Vowel", 0, 100}, {"Formant", -12, 12}, {"Focus", 0, 100}, {"Vowel Mix", 0, 100}, {"Vowel Env", -100, 100},
+                          {"LFO Rate", 0, 100}, {"LFO Depth", 0, 100}, {"LFO Shape", 0, 2}};
     for (auto &x : r) if (!std::strcmp(x.n, name)) { e->setParameter(e, param(e, name), (float)(v - x.lo) / (x.hi - x.lo)); return; }
 }
 /* a sine through the effect; returns the right channel's output (left gets silence unless both) */
@@ -91,6 +94,8 @@ static void neutral(AEffect *e) {
     set(e, "Cutoff", 100); set(e, "Resonance", 0); set(e, "Filter 2", 0); set(e, "Drive", 0);
     set(e, "Saturation", 0); set(e, "Emphasis", 0); set(e, "Env Amount", 0); set(e, "Attack", 10);
     set(e, "Decay", 40); set(e, "Threshold", -36); set(e, "Warmth", 0); set(e, "Width", 0); set(e, "Output", 0);
+    set(e, "Vowel", 0); set(e, "Formant", 0); set(e, "Focus", 60); set(e, "Vowel Mix", 0); set(e, "Vowel Env", 0);
+    set(e, "LFO Rate", 50); set(e, "LFO Depth", 0); set(e, "LFO Shape", 0);
 }
 static void silence(AEffect *e, double sec) { run(e, 100, 0.0, sec); }
 
@@ -104,6 +109,7 @@ int main(int argc, char **argv) {
     e->dispatcher(e, 10, 0, 0, nullptr, SR);
     if (argc > 2 && !std::strcmp(argv[2], "bench")) {
         set(e, "Drive", 30); set(e, "Saturation", 3); set(e, "Env Amount", 24); set(e, "Warmth", 100); set(e, "Width", 100);
+        set(e, "Vowel Mix", 100); set(e, "Vowel Env", 50); set(e, "LFO Depth", 100); set(e, "LFO Rate", 80);
         auto t0 = std::chrono::steady_clock::now();
         run(e, 110, 0.3, 10.0);
         double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -202,7 +208,75 @@ int main(int argc, char **argv) {
         CHECK(pk < 1.0, "output above 0 dBFS");
     }
 
-    /* 8. chunk */
+    /* 8. vowel filter: each vowel passes its own formants, FORMANT moves them, the envelope and
+     *    the LFO move the vowel; VOWEL MIX 0 is covered by the tests above (all run with it off) */
+    neutral(e);
+    set(e, "Vowel Mix", 100); set(e, "Focus", 80);
+    {
+        const char *vn[5] = {"A", "E", "I", "O", "U"};
+        const double f1[5] = {700, 450, 290, 420, 330}, f2[5] = {1150, 1750, 2100, 800, 650};
+        double lv[5][2];
+        for (int v = 0; v < 5; v++) {
+            set(e, "Vowel", v * 25);
+            CHECK(display(e, "Vowel") == vn[v], "vowel readout %s", display(e, "Vowel").c_str());
+            lv[v][0] = rms(run(e, 700, 0.1, 0.5), 0.3); lv[v][1] = rms(run(e, 2100, 0.1, 0.5), 0.3);
+            double on = rms(run(e, f1[v], 0.1, 0.5), 0.3), on2 = rms(run(e, f2[v], 0.1, 0.5), 0.3), off = rms(run(e, 5000, 0.1, 0.5), 0.3);
+            std::printf("  vowel %s: F1 %.1f dB, F2 %.1f dB, 5 kHz %.1f dB\n", vn[v], db(on), db(on2), db(off));
+            CHECK(on > off * 8 && on2 > off * 3, "vowel %s has no formant peaks", vn[v]);
+        }
+        CHECK(lv[0][0] > lv[2][0] * 3, "700 Hz: A is not louder than I");
+        CHECK(lv[2][1] > lv[4][1] * 3, "2.1 kHz: I is not louder than U");
+        set(e, "Vowel", 0);
+        double a0 = rms(run(e, 1400, 0.1, 0.5), 0.3);
+        set(e, "Formant", 12);
+        double a1 = rms(run(e, 1400, 0.1, 0.5), 0.3);
+        std::printf("  formant: 1.4 kHz %.1f dB (0), %.1f dB (%s)\n", db(a0), db(a1), display(e, "Formant").c_str());
+        CHECK(a1 > a0 * 2, "FORMANT does not shift the formants");
+        set(e, "Formant", 0);
+
+        /* VOWEL ENV: a note starts on U and falls back to A */
+        set(e, "Vowel Env", 100); set(e, "Attack", 0); set(e, "Decay", 30);
+        silence(e, 0.5);
+        auto b = run(e, 700, 0.1, 1.5);
+        std::vector<float> early(b.begin() + (size_t)(0.005 * SR), b.begin() + (size_t)(0.03 * SR)), late(b.begin() + (size_t)(1.2 * SR), b.end());
+        std::printf("  vowel env: 700 Hz %.1f dB in the first 30 ms, %.1f dB after 1.2 s\n", db(rms(early, 0)), db(rms(late, 0)));
+        CHECK(rms(late, 0) > rms(early, 0) * 2, "VOWEL ENV does not move the vowel");
+        set(e, "Vowel Env", 0);
+
+        /* LFO: the level of one formant frequency goes up and down, for each shape */
+        const char *ln[3] = {"TRI", "RANDOM", "STEP"};
+        set(e, "Vowel", 50); set(e, "LFO Depth", 100); set(e, "LFO Rate", 75);
+        for (int s = 0; s < 3; s++) {
+            set(e, "LFO Shape", s);
+            CHECK(display(e, "LFO Shape") == ln[s], "LFO shape readout %s", display(e, "LFO Shape").c_str());
+            auto c = run(e, 2100, 0.1, 4.0);
+            double lo = 1e9, hi = 0;
+            for (size_t i = (size_t)(0.3 * SR); i + 441 < c.size(); i += 441) {
+                double q = 0; for (int j = 0; j < 441; j++) q += (double)c[i + j] * c[i + j];
+                q = std::sqrt(q / 441); lo = std::min(lo, q); hi = std::max(hi, q);
+            }
+            std::printf("  lfo %-6s (%s): 2.1 kHz between %.1f and %.1f dB\n", ln[s], display(e, "LFO Rate").c_str(), db(lo), db(hi));
+            CHECK(hi > lo * 3, "LFO %s does not move the vowel", ln[s]);
+        }
+        set(e, "LFO Depth", 0);
+        auto d = run(e, 2100, 0.1, 1.0);
+        double lo = 1e9, hi = 0;
+        for (size_t i = (size_t)(0.3 * SR); i + 441 < d.size(); i += 441) {
+            double q = 0; for (int j = 0; j < 441; j++) q += (double)d[i + j] * d[i + j];
+            lo = std::min(lo, q); hi = std::max(hi, q);
+        }
+        CHECK(hi < lo * 1.05, "LFO DEPTH 0 still moves the vowel");
+
+        /* loud and sharp stays below 0 dBFS */
+        set(e, "Focus", 100); set(e, "Output", 12);
+        auto h = run(e, 700, 1.0, 0.5);
+        double pk = 0; for (float s : h) pk = std::max(pk, (double)std::fabs(s));
+        std::printf("  vowel hot: peak %.3f\n", pk);
+        CHECK(pk < 1.0, "vowel filter: output above 0 dBFS");
+    }
+
+    /* 9. chunk */
+    set(e, "Vowel", 75); set(e, "Formant", -5); set(e, "Vowel Mix", 60); set(e, "LFO Shape", 2);
     set(e, "Saturation", 2); set(e, "Filter 2", 7); set(e, "Env Amount", -12); set(e, "Output", -4);
     e->setParameter(e, param(e, "Cutoff"), 0.4321f);
     void *chunk = nullptr;
@@ -211,7 +285,7 @@ int main(int argc, char **argv) {
     AEffect *e2 = mainf(master);
     e2->dispatcher(e2, 10, 0, 0, nullptr, SR);
     e2->dispatcher(e2, 24, 0, (intptr_t)copy.size(), copy.data(), 0);
-    for (const char *k : {"Saturation", "Filter 2", "Env Amount", "Output", "Cutoff", "Decay"})
+    for (const char *k : {"Saturation", "Filter 2", "Env Amount", "Output", "Cutoff", "Decay", "Vowel", "Formant", "Vowel Mix", "LFO Shape", "LFO Rate"})
         CHECK(display(e2, k) == display(e, k), "chunk: %s %s vs %s", k, display(e2, k).c_str(), display(e, k).c_str());
     CHECK(std::fabs(e2->getParameter(e2, param(e2, "Cutoff")) - 0.4321f) < 1e-4f, "chunk: cutoff position not exact");
     std::printf("  chunk %ld bytes: %s, %s, %s, %s, %s\n", (long)len, display(e2, "Saturation").c_str(), display(e2, "Filter 2").c_str(),

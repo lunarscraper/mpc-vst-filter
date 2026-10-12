@@ -2,7 +2,8 @@
  * vfilter_vst.cpp - V-Filter: a "towards the Virus" filter as a VST2 insert effect for the MPC OS
  * plugin host (Force, MPC Live/One/X/Key), armhf. The DSP is vfilter_core.h: pre-emphasis,
  * filter 1, drive + saturation, filter 2, de-emphasis, output warmth, stereo chorus, and an
- * audio-triggered attack/decay envelope on the cutoff (an insert gets no notes). This file is
+ * audio-triggered attack/decay envelope on the cutoff (an insert gets no notes). In front of it
+ * sits an optional vowel/formant filter (A-E-I-O-U) moved by that envelope and its own LFO. This file is
  * the plug-in around it, hand-written like mpc-vst-rat's rat_vst.cpp (no wrapper, no SDK).
  * MIT license (see ../LICENSE). No affiliation with Access Music or Waldorf.
  * ========================================================================== */
@@ -78,7 +79,8 @@ struct Plugin {
 };
 
 static int IDX_CUTOFF, IDX_RESO, IDX_F2, IDX_DRIVE, IDX_SAT, IDX_EMPH, IDX_ENVAMT, IDX_ATTACK,
-           IDX_DECAY, IDX_THRESH, IDX_WARMTH, IDX_WIDTH, IDX_OUTPUT;
+           IDX_DECAY, IDX_THRESH, IDX_WARMTH, IDX_WIDTH, IDX_OUTPUT,
+           IDX_VOWEL, IDX_FORMANT, IDX_FOCUS, IDX_VMIX, IDX_VENV, IDX_LFORATE, IDX_LFODEPTH, IDX_LFOSHAPE;
 
 static int param_index(const char *key) {
     for (int i = 0; i < NPARAMS; i++) if (!std::strcmp(PARAMS[i].key, key)) return i;
@@ -123,6 +125,7 @@ static float nrm(Plugin *w, int i) { return i < 0 ? 0.0f : w->cache[i].load(); }
 static float cutoff_hz(float n) { return 20.0f * std::pow(900.0f, n); }      /* 20 Hz .. 18 kHz */
 static float attack_ms(float n) { return 0.5f * std::pow(400.0f, n); }       /* 0.5 .. 200 ms */
 static float decay_ms(float n) { return 10.0f * std::pow(400.0f, n); }       /* 10 ms .. 4 s */
+static float lfo_hz(float n) { return 0.1f * std::pow(200.0f, n); }          /* 0.1 .. 20 Hz */
 
 static void configure(Plugin *w) {
     VirusStyleFilter::Params &p = w->p;
@@ -139,6 +142,14 @@ static void configure(Plugin *w) {
     p.warmth = ui(w, IDX_WARMTH) / 100.0f;
     p.width = ui(w, IDX_WIDTH) / 100.0f;
     p.outputDb = (float)ui(w, IDX_OUTPUT);
+    p.vowel = nrm(w, IDX_VOWEL);                      /* the knob's full resolution: smooth morphing */
+    p.formantSemi = (float)ui(w, IDX_FORMANT);
+    p.focus = ui(w, IDX_FOCUS) / 100.0f;
+    p.vowelMix = ui(w, IDX_VMIX) / 100.0f;
+    p.vowelEnv = ui(w, IDX_VENV) / 100.0f;
+    p.lfoRateHz = lfo_hz(nrm(w, IDX_LFORATE));
+    p.lfoDepth = ui(w, IDX_LFODEPTH) / 100.0f;
+    p.lfoShape = clampi(ui(w, IDX_LFOSHAPE), 0, 2);
 }
 
 static void processReplacing(AEffect *e, float **in, float **out, int32_t n) {
@@ -233,7 +244,17 @@ static void format_value(Plugin *w, int idx, int u, float n, char *buf, size_t s
     }
     else if (idx == IDX_ATTACK) std::snprintf(buf, size, "%.1f ms", attack_ms(n));
     else if (idx == IDX_DECAY) std::snprintf(buf, size, "%d ms", (int)std::lround(decay_ms(n)));
-    else if (idx == IDX_F2 || idx == IDX_ENVAMT) std::snprintf(buf, size, "%+d st", u);
+    else if (idx == IDX_VOWEL) {                       /* "A", "A>E 40" ... "U" */
+        static const char V[] = "AEIOU";
+        const float pos = clamp01(n) * 4.0f;
+        const int i0 = clampi((int)pos, 0, 3), pc = (int)std::lround((pos - i0) * 100.0f);
+        if (pc < 3) std::snprintf(buf, size, "%c", V[i0]);
+        else if (pc > 97) std::snprintf(buf, size, "%c", V[i0 + 1]);
+        else std::snprintf(buf, size, "%c>%c %d", V[i0], V[i0 + 1], pc);
+    }
+    else if (idx == IDX_LFORATE) std::snprintf(buf, size, "%.1f Hz", lfo_hz(n));
+    else if (idx == IDX_VENV) std::snprintf(buf, size, "%+d", u);
+    else if (idx == IDX_F2 || idx == IDX_ENVAMT || idx == IDX_FORMANT) std::snprintf(buf, size, "%+d st", u);
     else if (idx == IDX_OUTPUT) std::snprintf(buf, size, "%+d dB", u);
     else if (idx == IDX_DRIVE || idx == IDX_THRESH) std::snprintf(buf, size, "%d dB", u);
     else std::snprintf(buf, size, "%d", u);
@@ -289,6 +310,14 @@ static void start_values(Plugin *w) {
     set_ui(w, IDX_WARMTH, 20);
     set_ui(w, IDX_WIDTH, 30);
     set_ui(w, IDX_OUTPUT, 0);
+    set_norm(w, IDX_VOWEL, 0.0f);      /* A */
+    set_ui(w, IDX_FORMANT, 0);
+    set_ui(w, IDX_FOCUS, 60);
+    set_ui(w, IDX_VMIX, 0);            /* vowel filter off: a fresh instance and old projects sound as before */
+    set_ui(w, IDX_VENV, 0);
+    set_norm(w, IDX_LFORATE, 0.565f);  /* 2 Hz */
+    set_ui(w, IDX_LFODEPTH, 0);
+    set_ui(w, IDX_LFOSHAPE, 0);        /* TRI */
 }
 
 extern "C" __attribute__((visibility("default"))) AEffect *VSTPluginMain(audioMasterCallback master) {
@@ -299,6 +328,9 @@ extern "C" __attribute__((visibility("default"))) AEffect *VSTPluginMain(audioMa
         IDX_ENVAMT = param_index("envamt"); IDX_ATTACK = param_index("attack"); IDX_DECAY = param_index("decay");
         IDX_THRESH = param_index("thresh"); IDX_WARMTH = param_index("warmth"); IDX_WIDTH = param_index("width");
         IDX_OUTPUT = param_index("output");
+        IDX_VOWEL = param_index("vowel"); IDX_FORMANT = param_index("formant"); IDX_FOCUS = param_index("focus");
+        IDX_VMIX = param_index("vmix"); IDX_VENV = param_index("venv"); IDX_LFORATE = param_index("lforate");
+        IDX_LFODEPTH = param_index("lfodepth"); IDX_LFOSHAPE = param_index("lfoshape");
     });
     Plugin *w = new Plugin();
     w->master = master;
