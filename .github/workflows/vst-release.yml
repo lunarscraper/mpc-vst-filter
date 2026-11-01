@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version, e.g. 0.2.0
+        description: Version, e.g. 0.3.0
         required: true
-        default: 0.2.0
+        default: 0.3.0
       dry_run:
         description: Build only (zip + skin previews as run artifacts), no draft release
         type: boolean
@@ -14,17 +14,17 @@ on:
 
 jobs:
   vfilter:
-    uses: sd88me/mpc-vst-plugins/.github/workflows/vst-release.yml@259f75d0ce0f836cfd89cc0a33c550b55917cffc
+    uses: sd88me/mpc-vst-plugins/.github/workflows/vst-release.yml@59d9c25f4f8c09cc15b05892d5a765b1a280dc43
     permissions:
       contents: write
     with:
       tag: vfilter-vst-v${{ inputs.version }}
       version: ${{ inputs.version }}
-      tools_ref: 259f75d0ce0f836cfd89cc0a33c550b55917cffc
+      tools_ref: 59d9c25f4f8c09cc15b05892d5a765b1a280dc43
       vst_dir: vst
       build: bash vst/build.sh
       host_test: bash vst/test.sh
       plugin_id: vfilter
       license: MIT
-      about: V-Filter (insert effect) - vowel/formant filter (A-E-I-O-U with envelope and LFO), two serial low-pass filters with saturation in between, audio-triggered filter envelope, output warmth and stereo chorus.
+      about: V-Filter (insert effect) - vowel/formant filter (A-E-I-O-U with envelope and LFO), two serial low-pass filters with saturation in between, audio-triggered filter envelope, output warmth and stereo chorus; a 16-step vowel / level sequencer on the Force's beat grid (1/4 to 1/64).
       dry_run: ${{ inputs.dry_run }}
