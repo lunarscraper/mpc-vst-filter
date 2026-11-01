@@ -10,6 +10,12 @@
 // "Rachen"), bewegt von der Huellkurve und einem eigenen LFO. vowelMix = 0 schaltet die
 // Stufe ganz ab (der Rest rechnet dann wie vorher).
 //
+// Step-Sequencer (seit 0.3.0): 16 Schritte im Takt der Force (Raster aus ppqPos des Hosts, bis 1/64,
+// also bis viermal so schnell wie das 1/16-Raster). Pro Schritt ein VOKAL (Spur 1) und ein PEGEL
+// (Spur 2). Der Vokal zieht die Vokalposition zu sich (seqDepth), der Pegel duckt das Signal
+// (seqGate, das Trancegate) und oeffnet das Filter (seqCutSemi) - zusammen das "Formant Gate".
+// seqGlide gleitet zwischen den Schritten. Alles 0 = Sequencer aus, der Klang wie vorher.
+//
 // Framework-neutral, keine Abhaengigkeiten ausser der Standardbibliothek.
 // Der nichtlineare Teil laeuft mit einfachem 2x-Oversampling.
 #pragma once
@@ -24,6 +30,7 @@ class VirusStyleFilter
 public:
     enum SatType { kSatOff = 0, kSatSoft, kSatHard, kSatFold };
     enum LfoShape { kLfoTri = 0, kLfoRandom, kLfoStep };
+    static constexpr int kSteps = 16;
 
     struct Params
     {
@@ -49,6 +56,15 @@ public:
         float lfoRateHz   = 2.0f;    // 0.1 .. 20
         float lfoDepth    = 0.0f;    // 0 .. 1  LFO -> Vokalposition
         int   lfoShape    = kLfoTri;
+        // Step-Sequencer
+        double seqStepBeats = 0.25;  // Laenge eines Schritts in Vierteln (0.25 = 1/16, 0.125 = 1/32, 0.0625 = 1/64)
+        int   seqLen      = 16;      // 1 .. 16 Schritte
+        float seqDepth    = 0.0f;    // 0 .. 1  Spur VOKAL -> Vokalposition
+        float seqGate     = 0.0f;    // 0 .. 1  Spur PEGEL -> Lautstaerke (0 = aus)
+        float seqCutSemi  = 0.0f;    // -48 .. +48  Spur PEGEL -> Cutoff (bei Pegel 100 %)
+        float seqGlide    = 0.0f;    // 0 .. 1  Gleiten, Anteil der Schrittlaenge
+        float seqVowel[kSteps] = {};  // 0 .. 1 je Schritt (wie VOWEL)
+        float seqLevel[kSteps] = {};  // 0 .. 1 je Schritt
     };
 
     void setSampleRate(float sampleRate)
@@ -78,11 +94,16 @@ public:
         vRng = 0x2545F491u;
         vPosSm = -1.0f;
         vOn = false;
+        seqStep = -1;
+        gateSm = 1.0f;
+        openSm = -1.0f;
         for (int f = 0; f < kFormants; ++f) { fc_[f] = SvfCoefs(); fGain[f] = 0.0f; }
     }
 
+    // beat0: Position des ersten Samples in Vierteln (ppqPos), beatInc: Viertel pro Sample.
+    // Der Sequencer liest daraus seinen Schritt - so liegt er auf dem Raster der Force.
     void process(const Params& p, const float* inL, const float* inR,
-                 float* outL, float* outR, uint32_t frames)
+                 float* outL, float* outR, uint32_t frames, double beat0 = 0.0, double beatInc = 0.0)
     {
         // Parameter, die nur einmal pro Block gebraucht werden
         // Ohne Saettigung waere Drive nur ein Pegelregler, deshalb dort neutral
@@ -111,6 +132,19 @@ public:
         const float vShift  = std::exp2(clamp(p.formantSemi, -12.0f, 12.0f) / 12.0f);
         const float vLfoInc = 16.0f * clamp(p.lfoRateHz, 0.1f, 20.0f) / fs;   // pro Kontrollschritt
         if (vMix <= 0.0005f && vOn) { for (int c = 0; c < 2; ++c) std::memset(ch[c].fm, 0, sizeof(ch[c].fm)); vOn = false; }
+        // Step-Sequencer
+        const float seqDepth = clamp(p.seqDepth, 0.0f, 1.0f);
+        const float seqGate  = clamp(p.seqGate, 0.0f, 1.0f);
+        const float seqCut   = clamp(p.seqCutSemi, -48.0f, 48.0f) / 12.0f;    // Oktaven
+        const bool  seqOn    = (seqDepth > 0.0005f || seqGate > 0.0005f || std::fabs(seqCut) > 0.001f) && p.seqStepBeats > 0;
+        const int   seqLen   = std::max(1, std::min(kSteps, p.seqLen));
+        const double stepBeats = p.seqStepBeats > 1e-4 ? p.seqStepBeats : 0.25;
+        // Gleiten: Zeitkonstante als Anteil der Schrittlaenge (mind. 1 ms), pro Kontrollschritt (16 Samples)
+        const double stepSec = beatInc > 0 ? stepBeats / (beatInc * fs) : 0.125;
+        const float glideTau = std::max(0.001f, clamp(p.seqGlide, 0.0f, 1.0f) * 0.5f * static_cast<float>(stepSec));
+        const float glideK   = 1.0f - std::exp(-16.0f / (glideTau * fs));
+        const float gateK    = 1.0f - std::exp(-1.0f / (0.0015f * fs));        // Gate: 1.5 ms gegen Knackser
+        if (!seqOn) { seqStep = -1; openSm = -1.0f; }
 
         for (uint32_t i = 0; i < frames; ++i)
         {
@@ -136,8 +170,24 @@ public:
             // ---------- Kontrollrate: Filterkoeffizienten alle 16 Samples ----------
             if (ctrlCounter == 0)
             {
+                float seqV = 0.0f, seqL = 1.0f;
+                if (seqOn)
+                {
+                    // der Schritt aus der Taktposition: floor(beat / Schrittlaenge) modulo Laenge
+                    const double beat = beat0 + beatInc * static_cast<double>(i);
+                    const double pos  = std::floor(beat / stepBeats + 1e-9);
+                    long long k = static_cast<long long>(pos) % seqLen;
+                    if (k < 0) k += seqLen;
+                    seqStep = static_cast<int>(k);
+                    seqV = clamp(p.seqVowel[seqStep], 0.0f, 1.0f);
+                    seqL = clamp(p.seqLevel[seqStep], 0.0f, 1.0f);
+                    if (openSm < 0.0f) openSm = seqL;
+                    openSm += glideK * (seqL - openSm);
+                    gateTarget = 1.0f - seqGate * (1.0f - seqL);
+                }
+                else gateTarget = 1.0f;
                 cutoffSm += 0.25f * (clamp(p.cutoffHz, 20.0f, 18000.0f) - cutoffSm);
-                const float fc1 = cutoffSm * std::exp2(p.envAmount * env);
+                const float fc1 = cutoffSm * std::exp2(p.envAmount * env + (seqOn ? seqCut * openSm : 0.0f));
                 const float fc2 = fc1 * std::exp2(p.filter2Semi / 12.0f);
                 setCoefs(c1, fc1, k);
                 setCoefs(c2, fc2, k);
@@ -158,9 +208,10 @@ public:
                     if (p.lfoShape == kLfoStep)        l = vLfoTo;
                     else if (p.lfoShape == kLfoRandom) l = vLfoFrom + (vLfoTo - vLfoFrom) * vLfoPhase;
                     else                               l = -tri(vLfoPhase);
-                    const float target = clamp(p.vowel + p.vowelEnv * env + 0.5f * clamp(p.lfoDepth, 0.0f, 1.0f) * l, 0.0f, 1.0f);
+                    const float base = seqOn ? p.vowel + seqDepth * (seqV - p.vowel) : p.vowel;
+                    const float target = clamp(base + p.vowelEnv * env + 0.5f * clamp(p.lfoDepth, 0.0f, 1.0f) * l, 0.0f, 1.0f);
                     if (vPosSm < 0.0f) vPosSm = target;
-                    vPosSm += 0.3f * (target - vPosSm);          // ~1 ms: Stufen ohne Knackser
+                    vPosSm += (seqOn ? std::max(glideK, 0.02f) : 0.3f) * (target - vPosSm);   // ~1 ms: Stufen ohne Knackser; GLIDE gleitet
 
                     const float pos = vPosSm * (kVowels - 1);
                     const int   i0  = std::min(kVowels - 2, static_cast<int>(pos));
@@ -242,6 +293,9 @@ public:
             }
 
             writeIdx = (writeIdx + 1) & kDelayMask;
+            // Trancegate des Sequencers (Spur PEGEL), weich gegen Knackser
+            gateSm += gateK * (gateTarget - gateSm);
+            if (gateSm < 0.99999f) { x[0] *= gateSm; x[1] *= gateSm; }
             outL[i] = x[0];
             outR[i] = x[1];
         }
@@ -357,4 +411,11 @@ private:
     float    vLfoPhase = 0.0f, vLfoFrom = 0.0f, vLfoTo = 0.0f, vPosSm = -1.0f;
     uint32_t vRng = 0x2545F491u;
     bool     vOn = false;
+
+    // Step-Sequencer
+    int   seqStep = -1;
+    float gateSm = 1.0f, gateTarget = 1.0f, openSm = -1.0f;
+
+public:
+    int currentStep() const { return seqStep; }   // 0 .. 15, -1 = aus
 };

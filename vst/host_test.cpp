@@ -2,7 +2,9 @@
  * is off, CUTOFF and FILTER 2 darkening, RESONANCE peaking, DRIVE adding harmonics for each
  * saturation type, the audio-triggered envelope opening the filter, WIDTH (0 = both channels
  * equal), channel independence, loud input below 0 dBFS, the vowel filter (formant peaks per vowel,
- * FORMANT shift, VOWEL ENV, LFO), chunk restore, NaN/denormal-free output.
+ * FORMANT shift, VOWEL ENV, LFO), the step sequencer (on MPC's beat grid from ppqPos: gate at 1/16, 1/32 and
+ * 1/64, bar position, free clock when stopped, vowel and filter steps, STEPS, RANDOM / RESET), chunk restore,
+ * NaN/denormal-free output.
  * With "bench" as the second argument it only measures CPU load. Prints PASSED/FAILED. */
 #include <chrono>
 #include <cmath>
@@ -31,8 +33,19 @@ struct AEffect {
     void (*processDoubleReplacing)(AEffect *, double **, double **, int32_t);
     char future[56];
 };
+typedef struct {
+    double samplePos, sampleRate, nanoSeconds, ppqPos, tempo, barStartPos, cycleStartPos, cycleEndPos;
+    int32_t timeSigNumerator, timeSigDenominator, smpteOffset, smpteFrameRate, samplesToNextClock, flags;
+} VstTimeInfo;
+static VstTimeInfo g_ti;                 /* what MPC reports: tempo, song position in quarters, transport */
+static bool g_host_time = false;         /* off: a host without time info (the plugin's own clock at 120) */
 static int automated = 0;
-static intptr_t master(AEffect *, int32_t op, int32_t, intptr_t, void *, float) { if (op == 0) automated++; return 0; }
+static intptr_t master(AEffect *, int32_t op, int32_t, intptr_t, void *, float) {
+    if (op == 0) automated++;
+    if (op == 7) return g_host_time ? (intptr_t)&g_ti : 0;
+    return 0;
+}
+enum { kPlaying = 1 << 1, kPpqValid = 1 << 9, kTempoValid = 1 << 10 };
 static int fails = 0;
 #define CHECK(c, ...) do { if (!(c)) { fails++; std::printf("FAIL: " __VA_ARGS__); std::printf("\n"); } } while (0)
 static const float SR = 44100;
@@ -53,6 +66,11 @@ static void set(AEffect *e, const char *name, int v) {
                           {"Vowel", 0, 100}, {"Formant", -12, 12}, {"Focus", 0, 100}, {"Vowel Mix", 0, 100}, {"Vowel Env", -100, 100},
                           {"LFO Rate", 0, 100}, {"LFO Depth", 0, 100}, {"LFO Shape", 0, 2}};
     for (auto &x : r) if (!std::strcmp(x.n, name)) { e->setParameter(e, param(e, name), (float)(v - x.lo) / (x.hi - x.lo)); return; }
+    static const R q[] = {{"Seq Rate", 0, 7}, {"Seq Steps", 1, 16}, {"Seq Vowel", 0, 100}, {"Seq Gate", 0, 100},
+                          {"Seq Filter", -48, 48}, {"Seq Glide", 0, 100}, {"Seq Random", 0, 1}, {"Seq Reset", 0, 1}};
+    for (auto &x : q) if (!std::strcmp(x.n, name)) { e->setParameter(e, param(e, name), (float)(v - x.lo) / (x.hi - x.lo)); return; }
+    if (!std::strncmp(name, "Vowel ", 6) || !std::strncmp(name, "Level ", 6)) { e->setParameter(e, param(e, name), v / 100.0f); return; }
+    std::printf("FAIL: set %s\n", name); fails++;
 }
 /* a sine through the effect; returns the right channel's output (left gets silence unless both) */
 static std::vector<float> run(AEffect *e, double f, double amp, double sec, std::vector<float> *left = nullptr, bool leftSilent = false) {
@@ -62,6 +80,7 @@ static std::vector<float> run(AEffect *e, double f, double amp, double sec, std:
     for (int b = 0; b < (int)(sec * SR / BS); b++) {
         for (int i = 0; i < BS; i++) { float s = (float)(amp * std::sin(ph)); ph += 2 * M_PI * f / SR; il[i] = leftSilent ? 0 : s; ir[i] = s; }
         e->processReplacing(e, in, out, BS);
+        if (g_ti.flags & kPlaying) g_ti.ppqPos += BS / SR * g_ti.tempo / 60.0;
         for (int i = 0; i < BS; i++) {
             for (float s : {ol[i], orr[i]}) if (!std::isfinite(s) || std::fpclassify(s) == FP_SUBNORMAL) bad = true;
             outR.push_back(orr[i]);
@@ -96,6 +115,9 @@ static void neutral(AEffect *e) {
     set(e, "Decay", 40); set(e, "Threshold", -36); set(e, "Warmth", 0); set(e, "Width", 0); set(e, "Output", 0);
     set(e, "Vowel", 0); set(e, "Formant", 0); set(e, "Focus", 60); set(e, "Vowel Mix", 0); set(e, "Vowel Env", 0);
     set(e, "LFO Rate", 50); set(e, "LFO Depth", 0); set(e, "LFO Shape", 0);
+    if (e->numParams > 40) {   /* the step sequencer off */
+        set(e, "Seq Vowel", 0); set(e, "Seq Gate", 0); set(e, "Seq Filter", 0); set(e, "Seq Glide", 0); set(e, "Seq Steps", 16); set(e, "Seq Rate", 3);
+    }
 }
 static void silence(AEffect *e, double sec) { run(e, 100, 0.0, sec); }
 
@@ -110,6 +132,7 @@ int main(int argc, char **argv) {
     if (argc > 2 && !std::strcmp(argv[2], "bench")) {
         set(e, "Drive", 30); set(e, "Saturation", 3); set(e, "Env Amount", 24); set(e, "Warmth", 100); set(e, "Width", 100);
         set(e, "Vowel Mix", 100); set(e, "Vowel Env", 50); set(e, "LFO Depth", 100); set(e, "LFO Rate", 80);
+        set(e, "Seq Vowel", 100); set(e, "Seq Gate", 80); set(e, "Seq Filter", 24); set(e, "Seq Rate", 7); set(e, "Seq Glide", 40);
         auto t0 = std::chrono::steady_clock::now();
         run(e, 110, 0.3, 10.0);
         double s = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
@@ -275,8 +298,148 @@ int main(int argc, char **argv) {
         CHECK(pk < 1.0, "vowel filter: output above 0 dBFS");
     }
 
+    /* 10. the step sequencer, on MPC's beat grid */
+    {
+        auto window = [](const std::vector<float> &a, double t0, double t1) {
+            double q = 0; size_t i0 = (size_t)(t0 * SR), i1 = std::min(a.size(), (size_t)(t1 * SR));
+            for (size_t i = i0; i < i1; i++) q += (double)a[i] * a[i];
+            return std::sqrt(q / std::max<size_t>(1, i1 - i0));
+        };
+        auto steplevels = [](AEffect *x, int on_every) {   /* level 100 on every n-th step, 0 elsewhere */
+            for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Level %d", k); set(x, nm, (k - 1) % on_every == 0 ? 100 : 0); }
+        };
+        /* a gate pattern loud / quiet alternating, at each rate: the loud and the quiet halves of every step pair,
+         * measured inside the steps (2 ms clear of the edges) */
+        g_host_time = true;
+        g_ti = VstTimeInfo{}; g_ti.sampleRate = SR; g_ti.tempo = 120; g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+        const int rates[3] = {3, 5, 7};
+        const char *rn[3] = {"1/16", "1/32", "1/64"};
+        const double stepSec[3] = {0.125, 0.0625, 0.03125};
+        for (int r = 0; r < 3; r++) {
+            neutral(e);
+            steplevels(e, 2);
+            set(e, "Seq Rate", rates[r]); set(e, "Seq Steps", 16); set(e, "Seq Gate", 100);
+            CHECK(display(e, "Seq Rate") == rn[r], "rate readout %s", display(e, "Seq Rate").c_str());
+            g_ti.ppqPos = 0;
+            auto a = run(e, 440, 0.3, 1.5);
+            double loud = 1e9, quiet = 0;
+            const double st = stepSec[r];
+            for (int k = 2; k * st + st < 1.4; k++) {
+                const double w = window(a, k * st + 0.003, k * st + st - 0.003);
+                if (k % 2 == 0) loud = std::min(loud, w); else quiet = std::max(quiet, w);
+            }
+            std::printf("  seq gate %s (%.1f ms steps): loud steps >= %.1f dB, quiet steps <= %.1f dB\n", rn[r], 1000 * st, db(loud), db(quiet));
+            CHECK(loud > quiet * 8, "SEQ GATE at %s does not follow the steps", rn[r]);
+        }
+        /* the grid is MPC's: starting at quarter 0.5 (the third sixteenth) the first sound is step 3 */
+        neutral(e);
+        for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Level %d", k); set(e, nm, k == 3 ? 100 : 0); }
+        set(e, "Seq Rate", 3); set(e, "Seq Gate", 100);
+        g_ti.ppqPos = 0.5;
+        {
+            auto a = run(e, 440, 0.3, 0.5);
+            const double s3 = window(a, 0.004, 0.121), s4 = window(a, 0.129, 0.246);
+            std::printf("  seq position: from quarter 0.5 step 3 %.1f dB, step 4 %.1f dB\n", db(s3), db(s4));
+            CHECK(s3 > s4 * 8, "the sequencer is not on MPC's grid (song position)");
+        }
+        /* STEPS 4: the pattern repeats after four steps */
+        steplevels(e, 4);
+        set(e, "Seq Steps", 4);
+        for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Level %d", k); set(e, nm, k == 1 ? 100 : 0); }
+        g_ti.ppqPos = 0;
+        {
+            auto a = run(e, 440, 0.3, 1.1);
+            const double s1 = window(a, 0.504, 0.621), s2 = window(a, 0.629, 0.746);   /* steps 5 and 6 of the bar = 1 and 2 */
+            std::printf("  seq steps 4: bar step 5 %.1f dB, step 6 %.1f dB\n", db(s1), db(s2));
+            CHECK(s1 > s2 * 8, "STEPS 4 does not repeat after four steps");
+        }
+        set(e, "Seq Steps", 16);
+        /* MPC stopped: the sequencer keeps stepping on its own clock */
+        steplevels(e, 2);
+        g_ti.flags = kTempoValid;
+        {
+            auto a = run(e, 440, 0.3, 1.2);
+            double lo = 1e9, hi = 0;   /* its own clock runs on from where MPC stopped: 10 ms windows, no grid */
+            for (double t = 0.1; t + 0.01 < 1.2; t += 0.01) { const double w = window(a, t, t + 0.01); lo = std::min(lo, w); hi = std::max(hi, w); }
+            std::printf("  seq stopped: steps between %.1f and %.1f dB\n", db(lo), db(hi));
+            CHECK(hi > lo * 8, "the sequencer stands still while MPC is stopped");
+        }
+        /* a host without time information: its own clock at 120 */
+        g_host_time = false;
+        {
+            auto a = run(e, 440, 0.3, 1.2);
+            double lo = 1e9, hi = 0;   /* its own clock runs on from where MPC stopped: 10 ms windows, no grid */
+            for (double t = 0.1; t + 0.01 < 1.2; t += 0.01) { const double w = window(a, t, t + 0.01); lo = std::min(lo, w); hi = std::max(hi, w); }
+            CHECK(hi > lo * 8, "no time info: the sequencer stands still");
+        }
+        g_host_time = true; g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+        /* vowel steps: A and I alternating; 2.1 kHz (I's F2) up and down with the steps */
+        neutral(e);
+        set(e, "Vowel Mix", 100); set(e, "Focus", 80); set(e, "Seq Vowel", 100); set(e, "Seq Rate", 3);
+        for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Vowel %d", k); set(e, nm, k % 2 ? 0 : 50); }
+        CHECK(display(e, "Vowel 1") == "A" && display(e, "Vowel 2") == "I", "step vowel readout %s %s", display(e, "Vowel 1").c_str(), display(e, "Vowel 2").c_str());
+        g_ti.ppqPos = 0;
+        {
+            auto a = run(e, 2100, 0.1, 1.2);
+            double iMin = 1e9, aMax = 0;   /* odd windows are the even steps (I), even windows the odd steps (A) */
+            for (int k = 1; k < 9; k++) { const double w = window(a, k * 0.125 + 0.01, k * 0.125 + 0.12); if (k % 2) iMin = std::min(iMin, w); else aMax = std::max(aMax, w); }
+            std::printf("  seq vowel: 2.1 kHz on the I steps >= %.1f dB, on the A steps <= %.1f dB\n", db(iMin), db(aMax));
+            CHECK(iMin > aMax * 2, "SEQ VOWEL does not move the vowel");
+        }
+        /* filter steps: CUTOFF low, SEQ FILTER +48: 3 kHz opens on the loud steps */
+        neutral(e);
+        set(e, "Cutoff", 30); set(e, "Seq Filter", 48); set(e, "Seq Rate", 3);
+        steplevels(e, 2);
+        g_ti.ppqPos = 0;
+        {
+            auto a = run(e, 3000, 0.1, 1.2);
+            double open = 1e9, closed = 0;
+            for (int k = 1; k < 9; k++) { const double w = window(a, k * 0.125 + 0.01, k * 0.125 + 0.12); if (k % 2 == 0) open = std::min(open, w); else closed = std::max(closed, w); }
+            std::printf("  seq filter: 3 kHz on open steps >= %.1f dB, on closed steps <= %.1f dB\n", db(open), db(closed));
+            CHECK(open > closed * 4, "SEQ FILTER does not open the filter on the steps");
+        }
+        /* GLIDE: with full glide the gate's edges are slower, the vowel slides (no hard step in 1 ms) */
+        /* RANDOM writes new steps, RESET brings the Formant Gate pattern back */
+        set(e, "Seq Reset", 1); set(e, "Seq Reset", 0);
+        CHECK(display(e, "Vowel 1") == "U" && display(e, "Level 7") == "100 %" && display(e, "Vowel 7") == "I", "RESET: %s %s %s",
+              display(e, "Vowel 1").c_str(), display(e, "Level 7").c_str(), display(e, "Vowel 7").c_str());
+        std::string before; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Level %d", k); before += display(e, nm) + "|"; }
+        set(e, "Seq Random", 1); set(e, "Seq Random", 0);
+        std::string after; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Level %d", k); after += display(e, nm) + "|"; }
+        CHECK(before != after && display(e, "Level 1") == "100 %", "RANDOM did not write a new pattern");
+        CHECK(e->getParameter(e, param(e, "Seq Random")) == 0.0f, "RANDOM does not spring back");
+        /* the Formant Gate in full: vowel, gate and filter at once, at 1/32, loud input stays below 0 dBFS */
+        neutral(e);
+        set(e, "Seq Reset", 1); set(e, "Seq Reset", 0);
+        set(e, "Vowel Mix", 100); set(e, "Seq Vowel", 100); set(e, "Seq Gate", 80); set(e, "Cutoff", 45); set(e, "Seq Filter", 36);
+        set(e, "Seq Rate", 5); set(e, "Seq Glide", 30); set(e, "Output", 12); set(e, "Focus", 100);
+        {
+            auto a = run(e, 110, 1.0, 1.0);
+            double pk = 0; for (float x : a) pk = std::max(pk, (double)std::fabs(x));
+            std::printf("  formant gate at 1/32, hot: peak %.3f, rms %.1f dB\n", pk, db(rms(a)));
+            CHECK(pk < 1.0 && rms(a) > 0.01, "formant gate: peak %.3f", pk);
+        }
+        g_host_time = false;
+    }
+
+    /* 9a. MPC sets parameter 0 (CUTOFF) to the far end and straight back on insert and STOP: no cutoff jump */
+    {
+        neutral(e);
+        set(e, "Cutoff", 40);
+        run(e, 4000, 0.3, 0.3);
+        const float before = e->getParameter(e, 0);
+        e->setParameter(e, 0, 1.0f); e->setParameter(e, 0, before);
+        auto a = run(e, 4000, 0.3, 0.3);
+        double pk = 0; for (size_t i = 0; i < (size_t)(0.02 * SR); i++) pk = std::max(pk, (double)std::fabs(a[i]));
+        std::printf("  parameter 0 toggle: cutoff %s, 4 kHz peak in the next 20 ms %.4f\n", display(e, "Cutoff").c_str(), pk);
+        CHECK(std::fabs(e->getParameter(e, 0) - before) < 1e-6f && pk < 0.05, "the parameter 0 toggle moved the cutoff");
+        e->setParameter(e, 0, 0.7f);
+        CHECK(std::fabs(e->getParameter(e, 0) - 0.7f) < 1e-6f, "a real CUTOFF move is lost");
+    }
+
     /* 9. chunk */
     set(e, "Vowel", 75); set(e, "Formant", -5); set(e, "Vowel Mix", 60); set(e, "LFO Shape", 2);
+    set(e, "Seq Rate", 5); set(e, "Seq Gate", 70); set(e, "Vowel 5", 38); set(e, "Level 12", 64); set(e, "Seq Steps", 12);
     set(e, "Saturation", 2); set(e, "Filter 2", 7); set(e, "Env Amount", -12); set(e, "Output", -4);
     e->setParameter(e, param(e, "Cutoff"), 0.4321f);
     void *chunk = nullptr;
@@ -285,7 +448,8 @@ int main(int argc, char **argv) {
     AEffect *e2 = mainf(master);
     e2->dispatcher(e2, 10, 0, 0, nullptr, SR);
     e2->dispatcher(e2, 24, 0, (intptr_t)copy.size(), copy.data(), 0);
-    for (const char *k : {"Saturation", "Filter 2", "Env Amount", "Output", "Cutoff", "Decay", "Vowel", "Formant", "Vowel Mix", "LFO Shape", "LFO Rate"})
+    for (const char *k : {"Saturation", "Filter 2", "Env Amount", "Output", "Cutoff", "Decay", "Vowel", "Formant", "Vowel Mix", "LFO Shape", "LFO Rate",
+                          "Seq Rate", "Seq Gate", "Vowel 5", "Level 12", "Seq Steps"})
         CHECK(display(e2, k) == display(e, k), "chunk: %s %s vs %s", k, display(e2, k).c_str(), display(e, k).c_str());
     CHECK(std::fabs(e2->getParameter(e2, param(e2, "Cutoff")) - 0.4321f) < 1e-4f, "chunk: cutoff position not exact");
     std::printf("  chunk %ld bytes: %s, %s, %s, %s, %s\n", (long)len, display(e2, "Saturation").c_str(), display(e2, "Filter 2").c_str(),

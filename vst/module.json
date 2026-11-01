@@ -1,26 +1,394 @@
 {
-  "_comment": "Not a real Schwung module -- chain_params lists the VST parameters of vfilter_vst.cpp so mpc-vst-plugins' tools/gen_vst.py can generate params.h + the skin. Keys must match vfilter_vst.cpp. Start values the plugin sets itself (start_values()). Only append, never reorder.",
-  "chain_params": [
-    { "key": "cutoff", "name": "Cutoff",     "min": 0, "max": 100 },
-    { "key": "reso",   "name": "Resonance",  "min": 0, "max": 100 },
-    { "key": "f2",     "name": "Filter 2",   "min": -24, "max": 24 },
-    { "key": "drive",  "name": "Drive",      "min": 0, "max": 30 },
-    { "key": "sat",    "name": "Saturation", "options": ["OFF", "SOFT", "HARD", "FOLD"] },
-    { "key": "emph",   "name": "Emphasis",   "min": 0, "max": 100 },
-    { "key": "envamt", "name": "Env Amount", "min": -48, "max": 48 },
-    { "key": "attack", "name": "Attack",     "min": 0, "max": 100 },
-    { "key": "decay",  "name": "Decay",      "min": 0, "max": 100 },
-    { "key": "thresh", "name": "Threshold",  "min": -60, "max": 0 },
-    { "key": "warmth", "name": "Warmth",     "min": 0, "max": 100 },
-    { "key": "width",  "name": "Width",      "min": 0, "max": 100 },
-    { "key": "output", "name": "Output",     "min": -24, "max": 12 },
-    { "key": "vowel",    "name": "Vowel",     "min": 0, "max": 100 },
-    { "key": "formant",  "name": "Formant",   "min": -12, "max": 12 },
-    { "key": "focus",    "name": "Focus",     "min": 0, "max": 100 },
-    { "key": "vmix",     "name": "Vowel Mix", "min": 0, "max": 100 },
-    { "key": "venv",     "name": "Vowel Env", "min": -100, "max": 100 },
-    { "key": "lforate",  "name": "LFO Rate",  "min": 0, "max": 100 },
-    { "key": "lfodepth", "name": "LFO Depth", "min": 0, "max": 100 },
-    { "key": "lfoshape", "name": "LFO Shape", "options": ["TRI", "RANDOM", "STEP"] }
-  ]
+ "_comment": "Not a real Schwung module -- chain_params lists the VST parameters of vfilter_vst.cpp so mpc-vst-plugins' tools/gen_vst.py can generate params.h + the skin. Keys must match vfilter_vst.cpp. Start values the plugin sets itself (start_values()). Only append, never reorder. 0.3.0 appended the step sequencer (seq*, sv1..sv16 = vowel per step, sl1..sl16 = level per step).",
+ "chain_params": [
+  {
+   "key": "cutoff",
+   "name": "Cutoff",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "reso",
+   "name": "Resonance",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "f2",
+   "name": "Filter 2",
+   "min": -24,
+   "max": 24
+  },
+  {
+   "key": "drive",
+   "name": "Drive",
+   "min": 0,
+   "max": 30
+  },
+  {
+   "key": "sat",
+   "name": "Saturation",
+   "options": [
+    "OFF",
+    "SOFT",
+    "HARD",
+    "FOLD"
+   ]
+  },
+  {
+   "key": "emph",
+   "name": "Emphasis",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "envamt",
+   "name": "Env Amount",
+   "min": -48,
+   "max": 48
+  },
+  {
+   "key": "attack",
+   "name": "Attack",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "decay",
+   "name": "Decay",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "thresh",
+   "name": "Threshold",
+   "min": -60,
+   "max": 0
+  },
+  {
+   "key": "warmth",
+   "name": "Warmth",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "width",
+   "name": "Width",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "output",
+   "name": "Output",
+   "min": -24,
+   "max": 12
+  },
+  {
+   "key": "vowel",
+   "name": "Vowel",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "formant",
+   "name": "Formant",
+   "min": -12,
+   "max": 12
+  },
+  {
+   "key": "focus",
+   "name": "Focus",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "vmix",
+   "name": "Vowel Mix",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "venv",
+   "name": "Vowel Env",
+   "min": -100,
+   "max": 100
+  },
+  {
+   "key": "lforate",
+   "name": "LFO Rate",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "lfodepth",
+   "name": "LFO Depth",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "lfoshape",
+   "name": "LFO Shape",
+   "options": [
+    "TRI",
+    "RANDOM",
+    "STEP"
+   ]
+  },
+  {
+   "key": "seqrate",
+   "name": "Seq Rate",
+   "options": [
+    "1/4",
+    "1/8",
+    "1/8T",
+    "1/16",
+    "1/16T",
+    "1/32",
+    "1/32T",
+    "1/64"
+   ],
+   "default": "1/16"
+  },
+  {
+   "key": "seqlen",
+   "name": "Seq Steps",
+   "min": 1,
+   "max": 16,
+   "default": 16
+  },
+  {
+   "key": "seqdepth",
+   "name": "Seq Vowel",
+   "min": 0,
+   "max": 100,
+   "default": 0
+  },
+  {
+   "key": "seqgate",
+   "name": "Seq Gate",
+   "min": 0,
+   "max": 100,
+   "default": 0
+  },
+  {
+   "key": "seqcut",
+   "name": "Seq Filter",
+   "min": -48,
+   "max": 48,
+   "default": 0
+  },
+  {
+   "key": "seqglide",
+   "name": "Seq Glide",
+   "min": 0,
+   "max": 100,
+   "default": 0
+  },
+  {
+   "key": "seqrnd",
+   "name": "Seq Random",
+   "min": 0,
+   "max": 1,
+   "access": "write"
+  },
+  {
+   "key": "seqinit",
+   "name": "Seq Reset",
+   "min": 0,
+   "max": 1,
+   "access": "write"
+  },
+  {
+   "key": "sv1",
+   "name": "Vowel 1",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv2",
+   "name": "Vowel 2",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv3",
+   "name": "Vowel 3",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv4",
+   "name": "Vowel 4",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv5",
+   "name": "Vowel 5",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv6",
+   "name": "Vowel 6",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv7",
+   "name": "Vowel 7",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv8",
+   "name": "Vowel 8",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv9",
+   "name": "Vowel 9",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv10",
+   "name": "Vowel 10",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv11",
+   "name": "Vowel 11",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv12",
+   "name": "Vowel 12",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv13",
+   "name": "Vowel 13",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv14",
+   "name": "Vowel 14",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv15",
+   "name": "Vowel 15",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sv16",
+   "name": "Vowel 16",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl1",
+   "name": "Level 1",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl2",
+   "name": "Level 2",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl3",
+   "name": "Level 3",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl4",
+   "name": "Level 4",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl5",
+   "name": "Level 5",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl6",
+   "name": "Level 6",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl7",
+   "name": "Level 7",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl8",
+   "name": "Level 8",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl9",
+   "name": "Level 9",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl10",
+   "name": "Level 10",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl11",
+   "name": "Level 11",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl12",
+   "name": "Level 12",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl13",
+   "name": "Level 13",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl14",
+   "name": "Level 14",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl15",
+   "name": "Level 15",
+   "min": 0,
+   "max": 100
+  },
+  {
+   "key": "sl16",
+   "name": "Level 16",
+   "min": 0,
+   "max": 100
+  }
+ ]
 }
