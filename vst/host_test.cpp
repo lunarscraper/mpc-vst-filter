@@ -408,6 +408,21 @@ int main(int argc, char **argv) {
         std::string after; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Level %d", k); after += display(e, nm) + "|"; }
         CHECK(before != after && display(e, "Level 1") == "100 %", "RANDOM did not write a new pattern");
         CHECK(e->getParameter(e, param(e, "Seq Random")) == 0.0f, "RANDOM does not spring back");
+        /* like the Force: a tap sends only the 1, never a 0 after it - every tap must act */
+        for (int t = 0; t < 3; t++) {
+            std::string was; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Vowel %d", k); was += display(e, nm) + "|"; }
+            e->setParameter(e, param(e, "Seq Random"), 1.0f);
+            run(e, 440, 0.0, 0.02);   /* a few blocks: the plugin reports the release */
+            std::string now; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Vowel %d", k); now += display(e, nm) + "|"; }
+            CHECK(now != was, "RANDOM tap %d (1 only, as the Force sends it) made no new pattern", t + 1);
+        }
+        e->setParameter(e, param(e, "Seq Reset"), 1.0f);
+        run(e, 440, 0.0, 0.02);
+        CHECK(display(e, "Vowel 1") == "U", "RESET tap (1 only) did nothing");
+        set(e, "Seq Random", 1.0); run(e, 440, 0.0, 0.02);
+        e->setParameter(e, param(e, "Seq Reset"), 1.0f);
+        run(e, 440, 0.0, 0.02);
+        CHECK(display(e, "Vowel 1") == "U" && display(e, "Level 7") == "100 %", "second RESET tap (1 only) did nothing");
         /* the Formant Gate in full: vowel, gate and filter at once, at 1/32, loud input stays below 0 dBFS */
         neutral(e);
         set(e, "Seq Reset", 1); set(e, "Seq Reset", 0);

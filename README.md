@@ -51,6 +51,9 @@ Step sequencer (tabs SEQ, STEPS 1-8, STEPS 9-16, since 0.3.0) - the vowel filter
 The Formant Gate on a bright synth: VOWEL MIX 100, SEQ VOWEL 100, SEQ GATE 70-80, CUTOFF around
 1 kHz, SEQ FILTER +36, RATE 1/16 or 1/32, GLIDE 10-30. Delay 1/8 behind it.
 
+0.3.1: RANDOM and RESET act on every tap (0.3.0 only on the first: the Force sends a tap as a 1 with no 0
+after it, and the button waited for one; it now re-arms when it reports its release).
+
 Since 0.3.0 the shell also keeps two host rules of mpc-vst-plugins (tools 2026-10-25, now the
 workflow's tools as well): MPC's insert/STOP toggle of parameter 0 (here CUTOFF) is held back
 and dropped when it ends where it started, and the trigger buttons are drawn large.

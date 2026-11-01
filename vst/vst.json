@@ -2,7 +2,7 @@
   "name": "V-Filter",
   "vendor": "lunarscraper",
   "uid": "VFlt",
-  "version": 1300,
+  "version": 1301,
   "so": "vfilter.so",
   "module": "module.json",
   "layout": "layout.conf",

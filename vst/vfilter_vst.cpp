@@ -235,7 +235,9 @@ static void processReplacing(AEffect *e, float **in, float **out, int32_t n) {
     }
     bool any = false;
     for (int i = 0; i < NPARAMS; i++) {
-        if (w->release[i]) { w->release[i] = 0; any = true; w->master(&w->fx, audioMasterAutomate, i, 0, 0, 0.0f); }
+        /* a trigger (RANDOM, RESET) reports itself released and is ready for the next tap: the Force sends no
+         * setParameter(0) after a tap, only the 1 of the next one */
+        if (w->release[i]) { w->release[i] = 0; w->down[i] = false; any = true; w->master(&w->fx, audioMasterAutomate, i, 0, 0, 0.0f); }
         if (!w->notify[i].exchange(0)) continue;
         any = true;
         w->master(&w->fx, audioMasterAutomate, i, 0, 0, w->cache[i].load());
