@@ -3,7 +3,8 @@
 #   vst/build/vfilter.so            -> /sdcard/vst/ on the device
 #   vst/build/pluginlist-entry.xml  the <PLUGIN> line for MPC.settings' pluginList-arm
 #   vst/build/skin/                 -> /sdcard/Synths/ on the device
-# vfilter_vst.cpp + the DSP core vfilter_core.h, no dependencies. vst.json/module.json only feed
+# vfilter_vst.cpp + the DSP core vfilter_core.h; libasound (ALSA) for the note lane's MIDI port, which the device has
+# (as for mpc-vst-acid's Acid FX). vst.json/module.json only feed
 # tools/gen_vst.py for params.h + the skin. Offline test + benchmark: test.sh.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -31,9 +32,10 @@ cp "$MPC_VST/wrapper/popup.h" build/   # popup open-flag handling shared with mp
 # 3. the plugin (armhf, glibc 2.36 so it loads on the device's 2.39). First-generation MPC OS
 #    units are Rockchip RK3288 (Cortex-A17, NEON/VFPv4), hence the tuning flags.
 docker run --rm --platform linux/arm/v7 -v "$PWD":/b -w /b arm32v7/gcc:12 bash -euxc '
+  apt-get update -qq && apt-get install -y -qq libasound2-dev >/dev/null
   g++ -O2 -fPIC -fvisibility=hidden -std=c++17 -mtune=cortex-a17 -mfpu=neon-vfpv4 -mfloat-abi=hard -fno-math-errno \
       -Wall -Wextra -Wno-unused-parameter -Ibuild -I. -o build/vfilter.so -shared vfilter_vst.cpp \
-      -static-libstdc++ -static-libgcc -lpthread -lm -Wl,--no-undefined
+      -static-libstdc++ -static-libgcc -lasound -lpthread -lm -Wl,--no-undefined
   strip build/vfilter.so
   echo "-- needed --"; readelf -d build/vfilter.so | grep NEEDED
   echo "-- highest glibc (device has 2.39) --"; readelf -V build/vfilter.so | grep -o "GLIBC_[0-9.]*" | sort -uV | tail -1

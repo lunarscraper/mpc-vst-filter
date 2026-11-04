@@ -51,6 +51,46 @@ Step sequencer (tabs SEQ, STEPS 1-8, STEPS 9-16, since 0.3.0) - the vowel filter
 The Formant Gate on a bright synth: VOWEL MIX 100, SEQ VOWEL 100, SEQ GATE 70-80, CUTOFF around
 1 kHz, SEQ FILTER +36, RATE 1/16 or 1/32, GLIDE 10-30. Delay 1/8 behind it.
 
+Note lane (tabs NOTES, NOTES 1-8, NOTES 9-16, since 0.4.0) - the sequencer plays a synth as well:
+
+- per step a **NOTE** (a scale step from ROOT, -14..+14, shown as the note: C3 = MIDI 60, Akai's
+  naming) and a **TRIG**: REST, NOTE, ACC (velocity 127 instead of 96), SLIDE (held into the next
+  step: the next note starts before this one ends, for legato/glide; the same pitch is simply held),
+  ACC SLD
+- **NOTES** OFF/ON, **ROOT**, **SCALE** (CHROM, MAJOR, MINOR, DORIAN, PHRYG, GOA = phrygian dominant,
+  HARM MIN, PENT MIN), **NOTE RANGE** (1..3 octaves for RND NOTES), **NOTE LENGTH** (10..100 % of a
+  step), **MIDI CHANNEL**
+- the notes run on the same grid and the same steps as vowel, level and filter (RATE, STEPS), only
+  while MPC plays; a stop, a loop jump or NOTES OFF ends the sounding note
+- **RND NOTES** writes a Goa line in the scale (the root often, octave jumps, rests where the level
+  lane is closed, accents and slides now and then); the SEQ tab's **RANDOM** now rolls the notes too,
+  **RESET** sets one held note (every sounding step slides), as the Formant Gate in Serum
+- MIDI out: MPC OS ignores a plugin's VST MIDI output, so the notes leave through the plugin's own
+  ALSA port **"V-Filter"** ("V-Filter 2", ... for more instances) - the way of Acid FX. On the Force:
+  V-Filter as an insert on the synth track, that track's MIDI input set to "V-Filter". The port is
+  there from the moment the plugin is inserted (MPC finds it without a restart); with NOTES OFF it
+  stays silent. The build links libasound (the device has it); the offline test builds with -DNO_ALSA
+  and checks the notes themselves.
+- a synth's own step sequences restart with every note it gets: with Okto's TALK, notes that slide
+  keep its pattern running (LEGATO), short notes start it again
+
+FLOW (tab FLOW, since 0.5.0) - the sequence as an endless line instead of a fixed pattern:
+
+- like a rope swung up and down: a slow wave in time with the song is the middle of a corridor, and
+  every step picks a note near it - chord tones (root, third, fifth of the scale) and small steps from
+  the last note preferred, an octave jump now and then. In key, never chaotic, never the same twice
+- **SPEED** (1..16 bars): one up-and-down of the wave. **HEIGHT** (0..14 scale steps): how far it swings.
+  **WIDTH** (0..7): how far a note may lie off the curve. **DRIFT** (0..100 %): how much the wave itself
+  wanders (phase and swing), so no two passes are alike. **DENSITY** (0..100 %): notes against rests.
+  SCALE and ROOT are on the tab as well
+- FLOW writes each step's note, trigger and level one step ahead - the filter, the gate and the note lane
+  follow; the vowels stay as they are. The NOTES 1-8 / 9-16 and STEPS pages show what it wrote
+- FLOW OFF keeps what it wrote last as the pattern ("freeze"): you like what is running, switch it off
+- without NOTES it moves only the levels (filter and gate); while MPC stands it runs on its own clock
+- every time FLOW is switched on it starts a new line (seeded from the clock; the test fixes the seed)
+
+Since 0.5.0 the shell sends at most one UpdateDisplay per 50 ms (FLOW writes steps all the time).
+
 0.3.1: RANDOM and RESET act on every tap (0.3.0 only on the first: the Force sends a tap as a 1 with no 0
 after it, and the button waited for one; it now re-arms when it reports its release).
 
@@ -66,7 +106,9 @@ Stereo, the nonlinear part 2x oversampled (linear, so heavy DRIVE with FOLD can 
 resonance peak, harmonics per saturation type, envelope, width, channel independence, output
 below 0 dBFS, the vowel filter's formants, envelope and LFO, the step sequencer at 1/16, 1/32 and
 1/64 on MPC's song position, stopped and without time info, vowel and filter steps, STEPS, RANDOM /
-RESET, the parameter 0 toggle, project restore) and a benchmark (below 1 % of an x86 core with
+RESET, the note lane (pitch per scale, accent, slide, rests, length, 1/32, stop, loop jump, RND NOTES), FLOW
+(swing at the wave's rate, small steps, in key, no repeats, vowels kept, freeze, without notes),
+the parameter 0 toggle, project restore) and a benchmark (below 1 % of an x86 core with
 everything on).
 
 The plug-in shell (`vst/vfilter_vst.cpp`) is hand-written like `mpc-vst-rat`'s, no wrapper.

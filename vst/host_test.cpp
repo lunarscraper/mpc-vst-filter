@@ -3,13 +3,16 @@
  * saturation type, the audio-triggered envelope opening the filter, WIDTH (0 = both channels
  * equal), channel independence, loud input below 0 dBFS, the vowel filter (formant peaks per vowel,
  * FORMANT shift, VOWEL ENV, LFO), the step sequencer (on MPC's beat grid from ppqPos: gate at 1/16, 1/32 and
- * 1/64, bar position, free clock when stopped, vowel and filter steps, STEPS, RANDOM / RESET), chunk restore,
+ * 1/64, bar position, free clock when stopped, vowel and filter steps, STEPS, RANDOM / RESET), the note lane
+ * (pitch per scale, accent, slide, rests, length, 1/32, stop, loop jump, notes off, RND NOTES), FLOW (a line that
+ * swings with the wave, small steps, in key, never the same, vowels kept, frozen when off, without notes), chunk restore,
  * NaN/denormal-free output.
  * With "bench" as the second argument it only measures CPU load. Prints PASSED/FAILED. */
 #include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <string>
 #include <vector>
@@ -70,6 +73,12 @@ static void set(AEffect *e, const char *name, int v) {
                           {"Seq Filter", -48, 48}, {"Seq Glide", 0, 100}, {"Seq Random", 0, 1}, {"Seq Reset", 0, 1}};
     for (auto &x : q) if (!std::strcmp(x.n, name)) { e->setParameter(e, param(e, name), (float)(v - x.lo) / (x.hi - x.lo)); return; }
     if (!std::strncmp(name, "Vowel ", 6) || !std::strncmp(name, "Level ", 6)) { e->setParameter(e, param(e, name), v / 100.0f); return; }
+    static const R nq[] = {{"Notes", 0, 1}, {"Root", 24, 96}, {"Scale", 0, 7}, {"Note Range", 1, 3}, {"Note Length", 10, 100},
+                           {"MIDI Channel", 1, 16}, {"Random Notes", 0, 1}, {"Flow", 0, 1}, {"Flow Speed", 1, 16},
+                           {"Flow Height", 0, 14}, {"Flow Width", 0, 7}, {"Flow Drift", 0, 100}, {"Flow Density", 0, 100}};
+    for (auto &x : nq) if (!std::strcmp(x.n, name)) { e->setParameter(e, param(e, name), (float)(v - x.lo) / (x.hi - x.lo)); return; }
+    if (!std::strncmp(name, "Note ", 5)) { e->setParameter(e, param(e, name), (v + 14) / 28.0f); return; }
+    if (!std::strncmp(name, "Trig ", 5)) { e->setParameter(e, param(e, name), v / 4.0f); return; }
     std::printf("FAIL: set %s\n", name); fails++;
 }
 /* a sine through the effect; returns the right channel's output (left gets silence unless both) */
@@ -435,6 +444,162 @@ int main(int argc, char **argv) {
             CHECK(pk < 1.0 && rms(a) > 0.01, "formant gate: peak %.3f", pk);
         }
         g_host_time = false;
+    }
+
+    /* 11. the note lane (offline build: the notes are recorded with their quarter instead of going to ALSA) */
+    {
+        auto cnt = (int (*)(void))dlsym(h, "vfilter_dbg_midi_count");
+        auto get = (int (*)(int, double *, int *, int *, int *))dlsym(h, "vfilter_dbg_midi");
+        auto clr = (void (*)(void))dlsym(h, "vfilter_dbg_midi_clear");
+        CHECK(cnt && get && clr, "no MIDI test hooks (build with -DNO_ALSA)");
+        if (cnt && get && clr) {
+            struct Ev { double b; int st, d1, d2; };
+            auto events = [&]() { std::vector<Ev> v; for (int i = 0; i < cnt(); i++) { Ev x; get(i, &x.b, &x.st, &x.d1, &x.d2); v.push_back(x); } return v; };
+            auto balanced = [&](const std::vector<Ev> &v) {   /* every note-on ends, nothing ends twice */
+                int on[128] = {0};
+                for (auto &x : v) { if ((x.st & 0xF0) == 0x90 && x.d2 > 0) on[x.d1]++; else if (on[x.d1] > 0) on[x.d1]--; else return false; }
+                for (int k = 0; k < 128; k++) if (on[k]) return false;
+                return true;
+            };
+            auto trig = [&](int k, int t) { char nm[16]; std::snprintf(nm, sizeof nm, "Trig %d", k); set(e, nm, t); };
+            auto note = [&](int k, int d) { char nm[16]; std::snprintf(nm, sizeof nm, "Note %d", k); set(e, nm, d); };
+            g_host_time = true;
+            g_ti = VstTimeInfo{}; g_ti.sampleRate = SR; g_ti.tempo = 120; g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+            neutral(e);
+            set(e, "Notes", 1); set(e, "Scale", 0); set(e, "Root", 60); set(e, "Note Length", 50); set(e, "MIDI Channel", 3);
+            CHECK(display(e, "Root") == "C3" && display(e, "MIDI Channel") == "CH 3", "readouts %s %s", display(e, "Root").c_str(), display(e, "MIDI Channel").c_str());
+            for (int k = 1; k <= 16; k++) { trig(k, 0); note(k, 0); }
+            /* 1 NOTE C3, 2 ACC C#3, 3 rest, 4 SLIDE D#3 -> 5 NOTE E3, 6 SLIDE F3 -> 7 SLIDE F3 (held) -> 8 NOTE G3 */
+            note(1, 0); trig(1, 1); note(2, 1); trig(2, 2); note(4, 3); trig(4, 3); note(5, 4); trig(5, 1);
+            note(6, 5); trig(6, 3); note(7, 5); trig(7, 3); note(8, 7); trig(8, 1);
+            CHECK(display(e, "Note 4") == "D#3" && display(e, "Trig 4") == "SLIDE", "step readouts %s %s", display(e, "Note 4").c_str(), display(e, "Trig 4").c_str());
+            clr();
+            g_ti.ppqPos = 0;
+            run(e, 100, 0.0, 2.0);    /* one bar (344 blocks: just short of quarter 4) */
+            auto v = events();
+            const Ev want[] = {{0.0, 0x92, 60, 96}, {0.125, 0x82, 60, 0}, {0.25, 0x92, 61, 127}, {0.375, 0x82, 61, 0},
+                               {0.75, 0x92, 63, 96}, {1.0, 0x92, 64, 96}, {1.0, 0x82, 63, 0}, {1.125, 0x82, 64, 0},
+                               {1.25, 0x92, 65, 96}, {1.75, 0x92, 67, 96}, {1.75, 0x82, 65, 0}, {1.875, 0x82, 67, 0}};
+            bool same = v.size() >= 12;
+            for (int i = 0; same && i < 12; i++)
+                same = std::fabs(v[i].b - want[i].b) < 1e-6 && v[i].st == want[i].st && v[i].d1 == want[i].d1 && v[i].d2 == want[i].d2;
+            std::printf("  notes, one bar at 1/16: %d events%s\n", (int)v.size(), same ? ", as written (note, accent, rest, slide, held slide)" : "");
+            if (!same) for (auto &x : v) std::printf("    %.3f %02x %d %d\n", x.b, x.st, x.d1, x.d2);
+            CHECK(same && v.size() == 12, "the note lane did not play the steps as written (%d events)", (int)v.size());
+            /* the second bar repeats it */
+            clr(); run(e, 100, 0.0, 2.0);
+            CHECK(events().size() == 12 && std::fabs(events()[0].b - 4.0) < 1e-6, "the second bar does not repeat");
+            /* MPC stops while a slide holds a note: it ends */
+            clr(); g_ti.ppqPos = 1.3; run(e, 100, 0.0, 0.15);   /* into step 7: F3 slides on, held */
+            g_ti.flags = kTempoValid; run(e, 100, 0.0, 0.1);
+            auto st = events();
+            CHECK(!st.empty() && (st.back().st & 0xF0) == 0x80, "STOP left a note hanging");
+            g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+            /* 1/32: twice as many notes in the same time */
+            for (int k = 1; k <= 16; k++) { trig(k, 1); note(k, 0); }
+            set(e, "Seq Rate", 5);
+            clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 2.0);
+            int ons = 0; for (auto &x : events()) ons += (x.st & 0xF0) == 0x90;
+            std::printf("  notes at 1/32: %d note-ons in one bar\n", ons);
+            CHECK(ons == 32 && balanced(events()), "1/32: %d notes in a bar", ons);
+            set(e, "Seq Rate", 3);
+            /* scale: GOA from C2 = C2 C#2 E2 F2 G2 G#2 A#2 C3 */
+            set(e, "Scale", 5); set(e, "Root", 48);
+            for (int k = 1; k <= 8; k++) note(k, k - 1);
+            for (int k = 9; k <= 16; k++) trig(k, 0);
+            clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 2.0);
+            std::vector<int> got; for (auto &x : events()) if ((x.st & 0xF0) == 0x90) got.push_back(x.d1);
+            const std::vector<int> goa = {48, 49, 52, 53, 55, 56, 58, 60};
+            std::printf("  scale GOA from %s:", display(e, "Root").c_str()); for (int n : got) std::printf(" %d", n); std::printf("\n");
+            CHECK(got == goa, "the GOA scale is not phrygian dominant from the root");
+            /* a loop back: nothing doubles, nothing hangs */
+            clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 0.9); g_ti.ppqPos = 0; run(e, 100, 0.0, 0.9);
+            g_ti.flags = kTempoValid; run(e, 100, 0.0, 0.1); g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+            CHECK(balanced(events()), "a loop jump left notes hanging or ended them twice");
+            /* NOTES OFF: silence on the port */
+            set(e, "Notes", 0); clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 1.0);
+            CHECK(cnt() == 0, "NOTES OFF still sends notes");
+            set(e, "Notes", 1);
+            /* RND NOTES: new notes, all in the scale; RESET: one held note */
+            std::string before; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Note %d", k); before += display(e, nm) + "|"; }
+            for (int t = 0; t < 3; t++) { e->setParameter(e, param(e, "Random Notes"), 1.0f); run(e, 100, 0.0, 0.02); }
+            g_ti.flags = kTempoValid; run(e, 100, 0.0, 0.02); g_ti.flags = kTempoValid | kPpqValid | kPlaying;   /* stop: nothing left over */
+            std::string after; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Note %d", k); after += display(e, nm) + "|"; }
+            CHECK(before != after, "RND NOTES made no new notes");
+            clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 2.0);
+            g_ti.flags = kTempoValid; run(e, 100, 0.0, 0.02); g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+            bool inkey = true; const int pcs[7] = {0, 1, 4, 5, 7, 8, 10};
+            for (auto &x : events()) if ((x.st & 0xF0) == 0x90) { int pc = ((x.d1 - 48) % 12 + 12) % 12; bool ok = false; for (int q : pcs) ok |= q == pc; inkey &= ok; }
+            std::printf("  rnd notes: %s\n", after.c_str());
+            CHECK(inkey && balanced(events()), "RND NOTES left the scale");
+            e->setParameter(e, param(e, "Seq Reset"), 1.0f); run(e, 100, 0.0, 0.02);
+            clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 2.0);
+            int ons2 = 0; for (auto &x : events()) ons2 += (x.st & 0xF0) == 0x90;
+            std::printf("  reset: %d note-ons in a bar (the Formant Gate: one held note, again after each rest)\n", ons2);
+            CHECK(ons2 >= 1 && ons2 <= 4, "RESET: %d note-ons", ons2);
+            /* FLOW: a swinging line - eight bars, wave of two bars, height 7 scale steps, width 1 (fixed seed) */
+            if (!std::getenv("VFILTER_FLOW_SEED")) setenv("VFILTER_FLOW_SEED", "7", 1);
+            set(e, "Notes", 1); set(e, "Scale", 5); set(e, "Root", 48); set(e, "Note Length", 60); set(e, "Seq Rate", 3); set(e, "Seq Steps", 16);
+            set(e, "Flow", 1); set(e, "Flow Speed", 2); set(e, "Flow Height", 7); set(e, "Flow Width", 1); set(e, "Flow Drift", 30); set(e, "Flow Density", 85);
+            CHECK(display(e, "Flow Speed") == "2 bars" && display(e, "Flow Height") == "+-7", "flow readouts %s %s", display(e, "Flow Speed").c_str(), display(e, "Flow Height").c_str());
+            std::string vow0; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Vowel %d", k); vow0 += display(e, nm) + "|"; }
+            g_ti.flags = kTempoValid; run(e, 100, 0.0, 0.05); g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+            clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 16.0);
+            g_ti.flags = kTempoValid; run(e, 100, 0.0, 0.05); g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+            {
+                auto fv = events();
+                std::vector<std::pair<double, int>> ons;
+                for (auto &x : fv) if ((x.st & 0xF0) == 0x90) ons.push_back({x.b, x.d1});
+                bool inkey = true; const int pcs[7] = {0, 1, 4, 5, 7, 8, 10};
+                int small = 0;
+                for (size_t i = 0; i < ons.size(); i++) {
+                    int pc = ((ons[i].second - 48) % 12 + 12) % 12; bool ok = false; for (int q : pcs) ok |= q == pc; inkey &= ok;
+                    if (i && std::abs(ons[i].second - ons[i - 1].second) <= 4) small++;
+                }
+                /* the swing: the pitch's strength at the wave's frequency (one cycle per 8 quarters) against others */
+                auto power = [&](double cyclesPerQuarter) {
+                    double re = 0, im = 0, mean = 0;
+                    for (auto &o : ons) mean += o.second;
+                    mean /= std::max<size_t>(1, ons.size());
+                    for (auto &o : ons) { double a = 2 * M_PI * cyclesPerQuarter * o.first; re += (o.second - mean) * std::cos(a); im += (o.second - mean) * std::sin(a); }
+                    return std::sqrt(re * re + im * im) / std::max<size_t>(1, ons.size());
+                };
+                const double pw = power(1.0 / 8);
+                double other = 0; int no = 0;
+                for (double f : {1.0 / 32, 1.0 / 3, 1.0 / 2, 3.0 / 8, 1.0 / 5, 1.0 / 1.5}) { other += power(f); no++; }
+                other /= no;
+                std::string b1, b3;
+                for (auto &o : ons) { if (o.first < 4) b1 += std::to_string(o.second) + " "; else if (o.first >= 8 && o.first < 12) b3 += std::to_string(o.second) + " "; }
+                std::printf("  flow: %d notes in 8 bars, %.0f %% small steps (<= 4 st), swing at the wave %.2f vs other rates %.2f\n",
+                            (int)ons.size(), 100.0 * small / std::max<size_t>(1, ons.size() - 1), pw, other);
+                std::printf("  flow bar 1: %s\n  flow bar 3: %s\n", b1.c_str(), b3.c_str());
+                CHECK(ons.size() >= 90 && inkey, "flow: %d notes, in key %d", (int)ons.size(), (int)inkey);
+                CHECK(small > 0.6 * (ons.size() - 1), "flow jumps around: %d small steps of %d", small, (int)ons.size() - 1);
+                CHECK(pw > 3 * other, "flow does not swing with the wave (%.2f vs %.2f)", pw, other);
+                CHECK(b1 != b3, "flow repeats itself");
+                CHECK(balanced(fv), "flow left notes hanging");
+            }
+            std::string vow1; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Vowel %d", k); vow1 += display(e, nm) + "|"; }
+            CHECK(vow0 == vow1, "FLOW changed the vowels");
+            /* FLOW off: what it wrote last stays as the pattern - two bars alike */
+            set(e, "Flow", 0);
+            clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 2.0);
+            std::vector<int> f1; for (auto &x : events()) if ((x.st & 0xF0) == 0x90) f1.push_back(x.d1);
+            clr(); run(e, 100, 0.0, 2.0);
+            std::vector<int> f2; for (auto &x : events()) if ((x.st & 0xF0) == 0x90) f2.push_back(x.d1);
+            g_ti.flags = kTempoValid; run(e, 100, 0.0, 0.05); g_ti.flags = kTempoValid | kPpqValid | kPlaying;
+            CHECK(!f1.empty() && f1 == f2, "FLOW off: the pattern is not kept (%d / %d notes)", (int)f1.size(), (int)f2.size());
+            /* FLOW without notes: the levels (filter, gate) keep moving */
+            set(e, "Notes", 0); set(e, "Flow", 1);
+            std::string l0; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Level %d", k); l0 += display(e, nm) + "|"; }
+            clr(); g_ti.ppqPos = 0; run(e, 100, 0.0, 2.0);
+            std::string l1; for (int k = 1; k <= 16; k++) { char nm[16]; std::snprintf(nm, sizeof nm, "Level %d", k); l1 += display(e, nm) + "|"; }
+            CHECK(l0 != l1 && cnt() == 0, "FLOW without notes: levels %s, %d notes", l0 == l1 ? "stand still" : "move", cnt());
+            set(e, "Flow", 0);
+            set(e, "Notes", 0);
+            g_ti.flags = kTempoValid; run(e, 100, 0.0, 0.05);
+            g_host_time = false;
+        }
     }
 
     /* 9a. MPC sets parameter 0 (CUTOFF) to the far end and straight back on insert and STOP: no cutoff jump */

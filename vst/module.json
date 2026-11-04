@@ -1,5 +1,5 @@
 {
- "_comment": "Not a real Schwung module -- chain_params lists the VST parameters of vfilter_vst.cpp so mpc-vst-plugins' tools/gen_vst.py can generate params.h + the skin. Keys must match vfilter_vst.cpp. Start values the plugin sets itself (start_values()). Only append, never reorder. 0.3.0 appended the step sequencer (seq*, sv1..sv16 = vowel per step, sl1..sl16 = level per step).",
+ "_comment": "Not a real Schwung module -- chain_params lists the VST parameters of vfilter_vst.cpp so mpc-vst-plugins' tools/gen_vst.py can generate params.h + the skin. Keys must match vfilter_vst.cpp. Start values the plugin sets itself (start_values()). Only append, never reorder. 0.3.0 appended the step sequencer (seq*, sv1..sv16 = vowel per step, sl1..sl16 = level per step). 0.4.0 appended the note lane (notes .. nrnd, sn1..sn16 = scale step per step, st1..st16 = rest/note/accent/slide), sent out through the plugin's own ALSA MIDI port 'V-Filter'. 0.5.0 appended FLOW (flow .. fdens): an endless generated line in a swinging corridor.",
  "chain_params": [
   {
    "key": "cutoff",
@@ -389,6 +389,413 @@
    "name": "Level 16",
    "min": 0,
    "max": 100
+  },
+  {
+   "key": "notes",
+   "name": "Notes",
+   "options": [
+    "OFF",
+    "ON"
+   ],
+   "default": "OFF"
+  },
+  {
+   "key": "root",
+   "name": "Root",
+   "min": 24,
+   "max": 96,
+   "default": 48
+  },
+  {
+   "key": "scale",
+   "name": "Scale",
+   "options": [
+    "CHROM",
+    "MAJOR",
+    "MINOR",
+    "DORIAN",
+    "PHRYG",
+    "GOA",
+    "HARM MIN",
+    "PENT MIN"
+   ],
+   "default": "GOA"
+  },
+  {
+   "key": "nrange",
+   "name": "Note Range",
+   "min": 1,
+   "max": 3,
+   "default": 1
+  },
+  {
+   "key": "nlen",
+   "name": "Note Length",
+   "min": 10,
+   "max": 100,
+   "default": 60
+  },
+  {
+   "key": "nch",
+   "name": "MIDI Channel",
+   "min": 1,
+   "max": 16,
+   "default": 1
+  },
+  {
+   "key": "nrnd",
+   "name": "Random Notes",
+   "min": 0,
+   "max": 1,
+   "access": "write"
+  },
+  {
+   "key": "sn1",
+   "name": "Note 1",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn2",
+   "name": "Note 2",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn3",
+   "name": "Note 3",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn4",
+   "name": "Note 4",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn5",
+   "name": "Note 5",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn6",
+   "name": "Note 6",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn7",
+   "name": "Note 7",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn8",
+   "name": "Note 8",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn9",
+   "name": "Note 9",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn10",
+   "name": "Note 10",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn11",
+   "name": "Note 11",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn12",
+   "name": "Note 12",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn13",
+   "name": "Note 13",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn14",
+   "name": "Note 14",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn15",
+   "name": "Note 15",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "sn16",
+   "name": "Note 16",
+   "min": -14,
+   "max": 14,
+   "default": 0
+  },
+  {
+   "key": "st1",
+   "name": "Trig 1",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st2",
+   "name": "Trig 2",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st3",
+   "name": "Trig 3",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st4",
+   "name": "Trig 4",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st5",
+   "name": "Trig 5",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st6",
+   "name": "Trig 6",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st7",
+   "name": "Trig 7",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st8",
+   "name": "Trig 8",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st9",
+   "name": "Trig 9",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st10",
+   "name": "Trig 10",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st11",
+   "name": "Trig 11",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st12",
+   "name": "Trig 12",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st13",
+   "name": "Trig 13",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st14",
+   "name": "Trig 14",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st15",
+   "name": "Trig 15",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "st16",
+   "name": "Trig 16",
+   "options": [
+    "REST",
+    "NOTE",
+    "ACC",
+    "SLIDE",
+    "ACC SLD"
+   ],
+   "default": "NOTE"
+  },
+  {
+   "key": "flow",
+   "name": "Flow",
+   "options": [
+    "OFF",
+    "ON"
+   ],
+   "default": "OFF"
+  },
+  {
+   "key": "fspeed",
+   "name": "Flow Speed",
+   "min": 1,
+   "max": 16,
+   "default": 4
+  },
+  {
+   "key": "fheight",
+   "name": "Flow Height",
+   "min": 0,
+   "max": 14,
+   "default": 5
+  },
+  {
+   "key": "fwidth",
+   "name": "Flow Width",
+   "min": 0,
+   "max": 7,
+   "default": 1
+  },
+  {
+   "key": "fdrift",
+   "name": "Flow Drift",
+   "min": 0,
+   "max": 100,
+   "default": 30
+  },
+  {
+   "key": "fdens",
+   "name": "Flow Density",
+   "min": 0,
+   "max": 100,
+   "default": 80
   }
  ]
 }
