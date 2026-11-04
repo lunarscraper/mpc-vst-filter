@@ -4,9 +4,9 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Version, e.g. 0.3.1
+        description: Version, e.g. 0.5.0
         required: true
-        default: 0.3.1
+        default: 0.5.0
       dry_run:
         description: Build only (zip + skin previews as run artifacts), no draft release
         type: boolean
@@ -26,5 +26,5 @@ jobs:
       host_test: bash vst/test.sh
       plugin_id: vfilter
       license: MIT
-      about: V-Filter (insert effect) - vowel/formant filter (A-E-I-O-U with envelope and LFO), two serial low-pass filters with saturation in between, audio-triggered filter envelope, output warmth and stereo chorus; a 16-step vowel / level sequencer on the Force's beat grid (1/4 to 1/64).
+      about: V-Filter (insert effect) - vowel/formant filter (A-E-I-O-U with envelope and LFO), two serial low-pass filters with saturation in between, audio-triggered filter envelope, output warmth and stereo chorus; a 16-step vowel / level / note sequencer on the Force's beat grid (1/4 to 1/64) that also plays a synth track through its own MIDI port, and FLOW, an endless line swinging in a corridor.
       dry_run: ${{ inputs.dry_run }}
