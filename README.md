@@ -112,7 +112,7 @@ the parameter 0 toggle, project restore) and a benchmark (below 1 % of an x86 co
 everything on).
 
 The plug-in shell (`vst/vfilter_vst.cpp`) is hand-written like `mpc-vst-rat`'s, no wrapper.
-Build/deploy workflow: see `sd88me/mpc-vst-plugins`' `docs/PORTING.md`. License: MIT.
+Build/deploy workflow: see `open-mpc/mpc-vst-plugins`' `docs/PORTING.md`. License: MIT.
 No affiliation with Access Music or Waldorf.
 
 ## Hinweis
