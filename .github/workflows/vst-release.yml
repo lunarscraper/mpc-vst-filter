@@ -14,13 +14,13 @@ on:
 
 jobs:
   vfilter:
-    uses: sd88me/mpc-vst-plugins/.github/workflows/vst-release.yml@59d9c25f4f8c09cc15b05892d5a765b1a280dc43
+    uses: open-mpc/mpc-vst-plugins/.github/workflows/vst-release.yml@8e266cec8abd3d780e331404209c3e8b8f699c5c
     permissions:
       contents: write
     with:
       tag: vfilter-vst-v${{ inputs.version }}
       version: ${{ inputs.version }}
-      tools_ref: 59d9c25f4f8c09cc15b05892d5a765b1a280dc43
+      tools_ref: 8e266cec8abd3d780e331404209c3e8b8f699c5c
       vst_dir: vst
       build: bash vst/build.sh
       host_test: bash vst/test.sh
