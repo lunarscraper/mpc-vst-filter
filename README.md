@@ -89,6 +89,17 @@ FLOW (tab FLOW, since 0.5.0) - the sequence as an endless line instead of a fixe
 - without NOTES it moves only the levels (filter and gate); while MPC stands it runs on its own clock
 - every time FLOW is switched on it starts a new line (seeded from the clock; the test fixes the seed)
 
+## Force-Look (Version 0.7.0)
+
+Neuer Skin wie bei Rattler 1.1 und Fader FX 1.2: große Schrift, große Bedienflächen und eine eigene, bunte Seite
+(tiefes Indigo mit dem V-Filter-Rot). Jede Seite hat oben links ihren Namen und darunter zwei Felder mit den Bedienelementen; Auswahllisten mit wenigen Einträgen (LFO SHAPE, NOTES, FLOW) sind große Felder, RANDOM / RESET / RND NOTES große Tasten. Seiten,
+Parameter, Q-Links, CCs, Presets und gespeicherte Projekte bleiben unverändert.
+
+Technik: `vst/force_look.py` (aus Rattler übernommen) läuft als `skin_post` von `gen_vst.py` und malt die Bilder des
+Generators neu; die Zeilen `#@look`, `#@title`, `#@frame`, `#@text` in `layout.conf` zeichnet es dazu. Der Workflow
+nutzt dafür open-mpc/mpc-vst-plugins Stand 1af05b9 (wie Rattler; installiert nach „VST2 Plugins“ ab MPC OS 3.10.1).
+Nach dem Installieren die Force einmal neu starten: MPC lädt einen geänderten Skin erst nach einem Neustart.
+
 ## Steuerung per MIDI-CC (seit 0.6.0)
 
 Der V-Filter hat neben seinem Ausgang „V-Filter“ einen zweiten MIDI-Port **Control In**. Er verbindet sich
