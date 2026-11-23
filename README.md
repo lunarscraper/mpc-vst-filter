@@ -89,6 +89,39 @@ FLOW (tab FLOW, since 0.5.0) - the sequence as an endless line instead of a fixe
 - without NOTES it moves only the levels (filter and gate); while MPC stands it runs on its own clock
 - every time FLOW is switched on it starts a new line (seeded from the clock; the test fixes the seed)
 
+## Steuerung per MIDI-CC (seit 0.6.0)
+
+Der V-Filter hat neben seinem Ausgang „V-Filter“ einen zweiten MIDI-Port **Control In**. Er verbindet sich
+selbst mit allen Hardware-MIDI-Eingängen (USB-Controller wie Faderfox EC4, DIN-In), auch mit später
+eingesteckten. Eine MIDI-Spur kann ihn als Output-Port wählen, und CC Map erreicht ihn mit **LINK A**.
+Ausgewertet werden nur CCs auf **CONTROL CH** (Tab ENV, OFF / 1–16, Voreinstellung **12**, damit er Acid,
+Cadenza, DrumGen und Euclidier auf 13–16 nicht in die Quere kommt; wird mit dem Projekt gespeichert).
+
+0–127 läuft über den ganzen Bereich; Auswahllisten springen auf die nächste Option; RANDOM, RESET und
+RND NOTES lösen aus, wenn der Wert über 64 steigt.
+
+| CC | Parameter | CC | Parameter | CC | Parameter |
+|---|---|---|---|---|---|
+| 20 | Cutoff | 40 | Vowel | 60 | Notes (an/aus) |
+| 21 | Resonance | 41 | Formant | 61 | Root |
+| 22 | Filter 2 | 42 | Focus | 62 | Scale |
+| 23 | Drive | 43 | Vowel Mix | 63 | Note Range |
+| 24 | Saturation | 44 | Vowel Env | 64 | Note Length |
+| 25 | Emphasis | 45 | LFO Rate | 65 | MIDI Channel |
+| 26 | Env Amount | 46 | LFO Depth | 66 | RND NOTES |
+| 27 | Attack | 47 | LFO Shape | 70 | Flow (an/aus) |
+| 28 | Decay | 50 | Seq Rate | 71 | Flow Speed |
+| 29 | Threshold | 51 | Seq Steps | 72 | Flow Height |
+| 30 | Warmth | 52 | Seq Vowel | 73 | Flow Width |
+| 31 | Width | 53 | Seq Gate | 74 | Flow Drift |
+| 32 | Output | 54 | Seq Filter | 75 | Flow Density |
+| | | 55 | Glide | | |
+| | | 56 | RANDOM | | |
+| | | 57 | RESET | | |
+
+**CC 80–95** = Vokal der Steps 1–16, **CC 96–111** = Pegel der Steps 1–16 – ideal für die 16 Encoder eines
+Faderfox EC4 (eine Gruppe Vokale, eine Gruppe Pegel).
+
 Since 0.5.0 the shell sends at most one UpdateDisplay per 50 ms (FLOW writes steps all the time).
 
 0.3.1: RANDOM and RESET act on every tap (0.3.0 only on the first: the Force sends a tap as a 1 with no 0

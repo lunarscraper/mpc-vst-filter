@@ -1,5 +1,5 @@
 {
- "_comment": "Not a real Schwung module -- chain_params lists the VST parameters of vfilter_vst.cpp so mpc-vst-plugins' tools/gen_vst.py can generate params.h + the skin. Keys must match vfilter_vst.cpp. Start values the plugin sets itself (start_values()). Only append, never reorder. 0.3.0 appended the step sequencer (seq*, sv1..sv16 = vowel per step, sl1..sl16 = level per step). 0.4.0 appended the note lane (notes .. nrnd, sn1..sn16 = scale step per step, st1..st16 = rest/note/accent/slide), sent out through the plugin's own ALSA MIDI port 'V-Filter'. 0.5.0 appended FLOW (flow .. fdens): an endless generated line in a swinging corridor.",
+ "_comment": "Not a real Schwung module -- chain_params lists the VST parameters of vfilter_vst.cpp so mpc-vst-plugins' tools/gen_vst.py can generate params.h + the skin. Keys must match vfilter_vst.cpp. Start values the plugin sets itself (start_values()). Only append, never reorder. 0.3.0 appended the step sequencer (seq*, sv1..sv16 = vowel per step, sl1..sl16 = level per step). 0.4.0 appended the note lane (notes .. nrnd, sn1..sn16 = scale step per step, st1..st16 = rest/note/accent/slide), sent out through the plugin's own ALSA MIDI port 'V-Filter'. 0.5.0 appended FLOW (flow .. fdens): an endless generated line in a swinging corridor. 0.6.0 appended ctlch (CONTROL CH: OFF, 1-16; the channel the port 'Control In' listens on for CCs).",
  "chain_params": [
   {
    "key": "cutoff",
@@ -796,6 +796,30 @@
    "min": 0,
    "max": 100,
    "default": 80
+  },
+  {
+   "key": "ctlch",
+   "name": "Control Ch",
+   "options": [
+    "OFF",
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16"
+   ],
+   "default": "12"
   }
  ]
 }

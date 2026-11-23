@@ -11,6 +11,10 @@
  * line endless: a slow wave in time with the song is the middle of a corridor, each step picks a note near it
  * (chord tones and small steps preferred), the levels follow - never the same twice, never chaotic. This file is
  * the plug-in around it, hand-written like mpc-vst-rat's rat_vst.cpp (no wrapper, no SDK).
+ * Since 0.6.0 CONTROL BY MIDI CC: a second ALSA port "Control In" subscribes itself to every hardware MIDI
+ * input (also ones plugged in later, as in Acid FX / Euclidier FX); CCs on CONTROL CH (OFF, 1-16, start 12)
+ * set the parameters - the map is cc_param() below and the README. A MIDI track can pick "Control In" as its
+ * output port, and CC Map's LINK A reaches it too (it feeds every port named "Control In").
  * MIT license (see ../LICENSE). No affiliation with Access Music or Waldorf.
  * ========================================================================== */
 #include <atomic>
@@ -106,6 +110,8 @@ struct Plugin {
     snd_seq_t *seq = nullptr;
 #endif
     int seq_port = -1, port_slot = -1;
+    int ctl_port = -1;                 /* "Control In": CCs from controllers and MIDI tracks (0.6.0) */
+    bool cc_high[128] = {false};       /* a CC button is above the middle: fires once per press */
     uint32_t rng = 0x9e3779b9u;
 };
 
@@ -117,6 +123,7 @@ static int IDX_SV[16], IDX_SL[16];
 static int IDX_NOTES, IDX_ROOT, IDX_SCALE, IDX_NRANGE, IDX_NLEN, IDX_NCH, IDX_NRND;
 static int IDX_SN[16], IDX_ST[16];
 static int IDX_FLOW, IDX_FSPEED, IDX_FHEIGHT, IDX_FWIDTH, IDX_FDRIFT, IDX_FDENS;
+static int IDX_CTLCH;
 enum { T_REST, T_NOTE, T_ACC, T_SLIDE, T_ACC_SLD };
 static bool is_trigger(int i) { return i >= 0 && (i == IDX_SEQRND || i == IDX_SEQINIT || i == IDX_NRND); }
 /* SEQ RATE: step length in quarter notes (1/32 and 1/64 = two and four times the Force's 1/16 grid) */
@@ -290,6 +297,57 @@ static bool g_port_used[32];
 static int port_take() { std::lock_guard<std::mutex> lk(g_port_lock); int n = 0; while (n < 31 && g_port_used[n]) n++; g_port_used[n] = true; return n; }
 static void port_give(int n) { std::lock_guard<std::mutex> lk(g_port_lock); if (n >= 0 && n < 32) g_port_used[n] = false; }
 
+/* ---- control by MIDI CC (0.6.0) -------------------------------------------------------------------
+ * CC on CONTROL CH -> parameter. 0..127 spans the whole range (CUTOFF, ATTACK, DECAY, VOWEL and the step vowels
+ * at full resolution); a list (SATURATION, LFO SHAPE, RATE, SCALE, NOTES, FLOW) takes the nearest option; the
+ * buttons RANDOM, RESET and RND NOTES fire once when the value rises above 64.
+ *   20 cutoff   21 reso     22 filter 2  23 drive    24 saturation 25 emphasis
+ *   26 env amt  27 attack   28 decay     29 thresh   30 warmth     31 width      32 output
+ *   40 vowel    41 formant  42 focus     43 vowel mix 44 vowel env 45 lfo rate   46 lfo depth 47 lfo shape
+ *   50 seq rate 51 steps    52 seq vowel 53 seq gate 54 seq filter 55 glide      56 RANDOM    57 RESET
+ *   60 notes    61 root     62 scale     63 range    64 length     65 midi ch    66 RND NOTES
+ *   70 flow     71 speed    72 height    73 width    74 drift      75 density
+ *   80..95 vowel of steps 1..16           96..111 level of steps 1..16 */
+static int cc_param(int cc) {
+    const int A[13] = {IDX_CUTOFF, IDX_RESO, IDX_F2, IDX_DRIVE, IDX_SAT, IDX_EMPH, IDX_ENVAMT, IDX_ATTACK, IDX_DECAY,
+                       IDX_THRESH, IDX_WARMTH, IDX_WIDTH, IDX_OUTPUT};
+    const int V[8] = {IDX_VOWEL, IDX_FORMANT, IDX_FOCUS, IDX_VMIX, IDX_VENV, IDX_LFORATE, IDX_LFODEPTH, IDX_LFOSHAPE};
+    const int S[8] = {IDX_SEQRATE, IDX_SEQLEN, IDX_SEQDEPTH, IDX_SEQGATE, IDX_SEQCUT, IDX_SEQGLIDE, IDX_SEQRND, IDX_SEQINIT};
+    const int N[7] = {IDX_NOTES, IDX_ROOT, IDX_SCALE, IDX_NRANGE, IDX_NLEN, IDX_NCH, IDX_NRND};
+    const int F[6] = {IDX_FLOW, IDX_FSPEED, IDX_FHEIGHT, IDX_FWIDTH, IDX_FDRIFT, IDX_FDENS};
+    if (cc >= 20 && cc <= 32) return A[cc - 20];
+    if (cc >= 40 && cc <= 47) return V[cc - 40];
+    if (cc >= 50 && cc <= 57) return S[cc - 50];
+    if (cc >= 60 && cc <= 66) return N[cc - 60];
+    if (cc >= 70 && cc <= 75) return F[cc - 70];
+    if (cc >= 80 && cc <= 95) return IDX_SV[cc - 80];
+    if (cc >= 96 && cc <= 111) return IDX_SL[cc - 96];
+    return -1;
+}
+static void control_in(Plugin *w, uint8_t status, uint8_t d1, uint8_t d2) {
+    if ((status & 0xF0) != 0xB0 || IDX_CTLCH < 0) return;
+    const int sel = ui(w, IDX_CTLCH);   /* 0 = OFF, else channel 1..16 */
+    if (sel == 0 || (status & 0x0F) != sel - 1) return;
+    d1 &= 0x7F; d2 &= 0x7F;
+    const int i = cc_param(d1);
+    if (i < 0) return;
+    const bool high = d2 >= 64, rising = high && !w->cc_high[d1];
+    w->cc_high[d1] = high;
+    if (is_trigger(i)) {
+        if (!rising) return;
+        if (i == IDX_SEQRND) { pattern_random(w); notes_random(w); }
+        else if (i == IDX_NRND) notes_random(w);
+        else { pattern_init(w); notes_init(w); }
+        w->dirty.store(true);
+        return;
+    }
+    const param_t *p = &PARAMS[i];
+    float n = d2 / 127.0f;
+    if (p->nopts > 1) n = (float)std::lround(n * (p->nopts - 1)) / (p->nopts - 1);
+    set_norm(w, i, n);
+    w->dirty.store(true);
+}
+
 #ifdef NO_ALSA
 /* offline test build: the notes are recorded with the quarter they belong to */
 struct DbgMidi { double beat; uint8_t st, d1, d2; };
@@ -301,6 +359,10 @@ extern "C" int vfilter_dbg_midi(int i, double *beat, int *st, int *d1, int *d2) 
     return 1;
 }
 extern "C" void vfilter_dbg_midi_clear(void) { g_dbg.clear(); }
+extern "C" void vfilter_dbg_control(AEffect *e, int status, int d1, int d2) {   /* as if it came in on Control In */
+    control_in((Plugin *)e->object, (uint8_t)status, (uint8_t)d1, (uint8_t)d2);
+}
+static void alsa_poll(Plugin *w) { (void)w; }
 static void port_open(Plugin *w) { w->port_slot = port_take(); }
 static void port_close(Plugin *w) { port_give(w->port_slot); w->port_slot = -1; }
 static void midi_out(Plugin *w, double beat, uint8_t st, uint8_t d1, uint8_t d2) {
@@ -308,8 +370,34 @@ static void midi_out(Plugin *w, double beat, uint8_t st, uint8_t d1, uint8_t d2)
     if (g_dbg.size() < 100000) g_dbg.push_back({beat, st, d1, d2});
 }
 #else
+/* Subscribe Control In to one hardware MIDI input (a USB controller, the DIN input): readable, exported,
+ * HARDWARE type - so not other plugins' virtual ports, and never our own notes coming back. */
+static void ctl_subscribe(Plugin *w, int client, int port) {
+    if (client == snd_seq_client_id(w->seq) || client == SND_SEQ_CLIENT_SYSTEM) return;
+    snd_seq_port_info_t *pi;
+    snd_seq_port_info_alloca(&pi);
+    if (snd_seq_get_any_port_info(w->seq, client, port, pi) < 0) return;
+    const unsigned cap = snd_seq_port_info_get_capability(pi), type = snd_seq_port_info_get_type(pi);
+    if ((cap & (SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ)) != (SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ)) return;
+    if (cap & SND_SEQ_PORT_CAP_NO_EXPORT) return;
+    if (!(type & SND_SEQ_PORT_TYPE_HARDWARE)) return;
+    snd_seq_connect_from(w->seq, w->ctl_port, client, port);
+}
+static void ctl_subscribe_all(Plugin *w) {
+    snd_seq_client_info_t *ci;
+    snd_seq_port_info_t *pi;
+    snd_seq_client_info_alloca(&ci);
+    snd_seq_port_info_alloca(&pi);
+    snd_seq_client_info_set_client(ci, -1);
+    while (snd_seq_query_next_client(w->seq, ci) >= 0) {
+        const int c = snd_seq_client_info_get_client(ci);
+        snd_seq_port_info_set_client(pi, c);
+        snd_seq_port_info_set_port(pi, -1);
+        while (snd_seq_query_next_port(w->seq, pi) >= 0) ctl_subscribe(w, c, snd_seq_port_info_get_port(pi));
+    }
+}
 static void port_open(Plugin *w) {
-    if (snd_seq_open(&w->seq, "default", SND_SEQ_OPEN_OUTPUT, SND_SEQ_NONBLOCK) < 0) { w->seq = nullptr; return; }
+    if (snd_seq_open(&w->seq, "default", SND_SEQ_OPEN_DUPLEX, SND_SEQ_NONBLOCK) < 0) { w->seq = nullptr; return; }
     snd_seq_set_client_pool_output(w->seq, 1024);   /* headroom so a slow subscriber never stalls the audio thread */
     w->port_slot = port_take();
     char name[32];
@@ -318,6 +406,27 @@ static void port_open(Plugin *w) {
     snd_seq_set_client_name(w->seq, name);
     w->seq_port = snd_seq_create_simple_port(w->seq, "MIDI Out", SND_SEQ_PORT_CAP_READ | SND_SEQ_PORT_CAP_SUBS_READ,
                                              SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+    w->ctl_port = snd_seq_create_simple_port(w->seq, "Control In", SND_SEQ_PORT_CAP_WRITE | SND_SEQ_PORT_CAP_SUBS_WRITE,
+                                             SND_SEQ_PORT_TYPE_MIDI_GENERIC | SND_SEQ_PORT_TYPE_APPLICATION);
+    if (w->ctl_port < 0) return;
+    /* hot-plug: the system announce port reports ports that appear later */
+    snd_seq_connect_from(w->seq, w->ctl_port, SND_SEQ_CLIENT_SYSTEM, SND_SEQ_PORT_SYSTEM_ANNOUNCE);
+    ctl_subscribe_all(w);
+}
+/* audio thread: drain Control In (non-blocking, bounded) */
+static void alsa_poll(Plugin *w) {
+    if (!w->seq || w->ctl_port < 0) return;
+    snd_seq_event_t *ev = nullptr;
+    for (int guard = 0; guard < 256 && snd_seq_event_input_pending(w->seq, 1) > 0; guard++) {
+        if (snd_seq_event_input(w->seq, &ev) < 0 || !ev) break;
+        if (ev->type == SND_SEQ_EVENT_CONTROLLER) {
+            const int v = ev->data.control.value;
+            control_in(w, (uint8_t)(0xB0 | (ev->data.control.channel & 0x0F)), (uint8_t)(ev->data.control.param & 0x7F),
+                       (uint8_t)(v < 0 ? 0 : v > 127 ? 127 : v));
+        } else if (ev->type == SND_SEQ_EVENT_PORT_START) {
+            ctl_subscribe(w, ev->data.addr.client, ev->data.addr.port);
+        }
+    }
 }
 static void midi_out(Plugin *w, double beat, uint8_t st, uint8_t d1, uint8_t d2) {
     (void)beat;
@@ -487,6 +596,7 @@ static void processReplacing(AEffect *e, float **in, float **out, int32_t n) {
     Plugin *w = (Plugin *)e->object;
     NoDenormals nd;
     flush_pend0(w);
+    alsa_poll(w);   /* Control In first, so a knob move lands on this block */
     if (w->dirty.exchange(false)) configure(w);
     /* the beat grid: MPC's song position while it plays, else an own clock at its tempo (or 120) */
     const VstTimeInfo *ti = (const VstTimeInfo *)w->master(&w->fx, audioMasterGetTime, 0, kVstPpqPosValid | kVstTempoValid, 0, 0.0f);
@@ -740,6 +850,7 @@ static void start_values(Plugin *w) {
     set_ui(w, IDX_FWIDTH, 1);
     set_ui(w, IDX_FDRIFT, 30);
     set_ui(w, IDX_FDENS, 80);
+    set_ui(w, IDX_CTLCH, 12);          /* CONTROL CH 12: clear of Acid, Cadenza, DrumGen, Euclidier (13..16) */
 }
 
 extern "C" __attribute__((visibility("default"))) AEffect *VSTPluginMain(audioMasterCallback master) {
@@ -768,6 +879,7 @@ extern "C" __attribute__((visibility("default"))) AEffect *VSTPluginMain(audioMa
         IDX_NRND = param_index("nrnd");
         IDX_FLOW = param_index("flow"); IDX_FSPEED = param_index("fspeed"); IDX_FHEIGHT = param_index("fheight");
         IDX_FWIDTH = param_index("fwidth"); IDX_FDRIFT = param_index("fdrift"); IDX_FDENS = param_index("fdens");
+        IDX_CTLCH = param_index("ctlch");
     });
     Plugin *w = new Plugin();
     w->master = master;

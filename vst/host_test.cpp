@@ -617,6 +617,39 @@ int main(int argc, char **argv) {
         CHECK(std::fabs(e->getParameter(e, 0) - 0.7f) < 1e-6f, "a real CUTOFF move is lost");
     }
 
+    /* 8b. 0.6.0: control by MIDI CC on CONTROL CH (start 12), as if it came in on "Control In" */
+    {
+        auto ctl = (void (*)(AEffect *, int, int, int))dlsym(h, "vfilter_dbg_control");
+        CHECK(ctl != nullptr, "no vfilter_dbg_control");
+        if (ctl) {
+            CHECK(display(e, "Control Ch") == "12", "control ch start: '%s'", display(e, "Control Ch").c_str());
+            ctl(e, 0xBB, 21, 127);
+            CHECK(display(e, "Resonance") == "100", "CC 21 on ch 12 -> resonance: '%s'", display(e, "Resonance").c_str());
+            ctl(e, 0xB0, 21, 0);
+            CHECK(display(e, "Resonance") == "100", "CC on another channel ignored: '%s'", display(e, "Resonance").c_str());
+            ctl(e, 0xBB, 47, 127);
+            CHECK(display(e, "LFO Shape") == "STEP", "CC 47 127 -> LFO shape STEP: '%s'", display(e, "LFO Shape").c_str());
+            ctl(e, 0xBB, 47, 64);
+            CHECK(display(e, "LFO Shape") == "RANDOM", "CC 47 64 -> RANDOM: '%s'", display(e, "LFO Shape").c_str());
+            ctl(e, 0xBB, 80, 127);
+            CHECK(display(e, "Vowel 1") == "U", "CC 80 -> step 1 vowel U: '%s'", display(e, "Vowel 1").c_str());
+            ctl(e, 0xBB, 111, 0);
+            CHECK(display(e, "Level 16") == "0 %", "CC 111 -> step 16 level 0: '%s'", display(e, "Level 16").c_str());
+            std::string before;
+            for (int k = 1; k <= 16; k++) { before += display(e, ("Vowel " + std::to_string(k)).c_str()) + "|"; before += display(e, ("Level " + std::to_string(k)).c_str()) + "|"; }
+            ctl(e, 0xBB, 56, 127); ctl(e, 0xBB, 56, 0);   /* RANDOM */
+            std::string after;
+            for (int k = 1; k <= 16; k++) { after += display(e, ("Vowel " + std::to_string(k)).c_str()) + "|"; after += display(e, ("Level " + std::to_string(k)).c_str()) + "|"; }
+            CHECK(after != before, "CC 56 RANDOM changes the steps");
+            e->setParameter(e, param(e, "Control Ch"), 0.0f);   /* OFF */
+            ctl(e, 0xBB, 21, 0);
+            CHECK(display(e, "Resonance") == "100", "CONTROL CH OFF ignores CCs: '%s'", display(e, "Resonance").c_str());
+            e->setParameter(e, param(e, "Control Ch"), 12.0f / 16.0f);
+            CHECK(display(e, "Control Ch") == "12", "control ch back to 12: '%s'", display(e, "Control Ch").c_str());
+            set(e, "Resonance", 30); set(e, "LFO Shape", 0);
+        }
+    }
+
     /* 9. chunk */
     set(e, "Vowel", 75); set(e, "Formant", -5); set(e, "Vowel Mix", 60); set(e, "LFO Shape", 2);
     set(e, "Seq Rate", 5); set(e, "Seq Gate", 70); set(e, "Vowel 5", 38); set(e, "Level 12", 64); set(e, "Seq Steps", 12);
